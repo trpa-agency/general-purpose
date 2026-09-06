@@ -1,0 +1,47 @@
+# build-erd configuration
+# Paths/parameters for SDE schema dump and Mermaid ERD rendering.
+# No secrets — credentials live in the .sde connection files.
+
+output:
+  schemas_dir: schemas
+  erd_dir: erd
+
+workspaces:
+  - name: sde
+    label: "SDE (Vector)"
+    sde_path: C:\Users\mbindl\AppData\Local\ESRI\Index\Connections\Vector.sde
+
+  - name: tabular
+    label: "Tabular"
+    sde_path: C:\Users\mbindl\AppData\Local\ESRI\Index\Connections\Tabular.sde
+
+  - name: collection
+    label: "Collection"
+    sde_path: C:\Users\mbindl\AppData\Local\ESRI\Index\Connections\Collection.sde
+
+  - name: raster
+    label: "Raster"
+    sde_path: C:\Users\mbindl\AppData\Local\ESRI\Index\Connections\Raster.sde
+
+# Case-insensitive regex matched against the unqualified object name
+# (no DB/owner prefix). Anything matching exclude_patterns is skipped.
+filters:
+  exclude_patterns:
+    - '^GDB_'
+    - '^SDE_'
+    - '^a\d+$'
+    - '^A\d+$'
+    - '__ATTACH$'
+    - '__ATTACHREL$'
+    - '_H$'
+    - '_EVW$'
+    - '^VERSIONS?$'
+  include_patterns: []  # whitelist; if non-empty, must match at least one
+
+render:
+  max_entities_per_diagram: 60
+  max_fields_per_entity: 40
+  overview_relationships_only: true
+  pk_field_names:
+    - OBJECTID
+    - GLOBALID

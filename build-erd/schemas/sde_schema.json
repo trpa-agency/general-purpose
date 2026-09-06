@@ -1,0 +1,17 @@
+{
+  "workspace": {
+    "name": "sde",
+    "label": "SDE (Vector)",
+    "sde_path": "C:\\Users\\mbindl\\Documents\\GitHub\\ParcelUpdate\\db_connections\\ConnectionFile.sde",
+    "dumped_at": "2026-05-05T20:38:55+00:00",
+    "arcpy_version": "3.5.2"
+  },
+  "feature_datasets": [],
+  "feature_classes": [],
+  "tables": [],
+  "relationship_classes": [],
+  "skipped": {
+    "by_pattern": [],
+    "by_error": []
+  }
+}
