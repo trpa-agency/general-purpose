@@ -32,10 +32,11 @@ target:
   snap_raster: null
   # Output extent = boundary polygon (below) unioned with lake polygon, plus buffer.
   extent_buffer_m: 100
-  # Test box [xmin, ymin, xmax, ymax] in target CRS meters. When set, the whole
-  # notebook runs on this box only. null = full basin. The example is ~4 x 4 km
-  # around Sand Harbor where all four sources overlap; adjust to taste.
-  test_extent: null   # e.g. [762000, 4338000, 766000, 4342000]
+  # Test box [xmin, ymin, xmax, ymax] in target CRS meters, used by --test.
+  # 4 x 4 km at Kings Beach: ~1 km of flat land north of the shore for the land
+  # offset pairs, and a gradual shelf reaching the 5-13 m band where sonar and
+  # green lidar overlap. Change to any shoreline box; all four sources cover it.
+  test_extent: [754500, 4344500, 758500, 4348500]
   pixel_type: 32_BIT_FLOAT
   compression: LZW
   # Sanity range (m). Lake bottom ~1,397 m, Freel Peak 3,317 m. Anything outside is
