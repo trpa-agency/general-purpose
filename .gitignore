@@ -1,0 +1,32 @@
+# Rasters, point clouds, and other large binary data
+*.tif
+*.tiff
+*.tfw
+*.ovr
+*.aux
+*.aux.xml
+*.img
+*.laz
+*.las
+*.zip
+*.7z
+*.gdb/
+*.lyrx
+*.crf
+
+# Downloaded data trees
+lidar-download/DEM_downloads/
+lidar-download/LAZ_downloads/
+
+# Secrets and database connections
+.env
+*.sde
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Logs and scratch
+*.log
+outputs/

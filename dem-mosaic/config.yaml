@@ -1,0 +1,190 @@
+# dem-mosaic config
+# Paths, parameters, and per-source metadata. No secrets here (.env for SDE creds).
+# Fill in the TODO values before running the notebook.
+
+project:
+  name: tahoe-dem-mosaic
+  # Runs on the GIS server. Scratch.gdb there is shared, so every intermediate is
+  # written with name_prefix so overwriteOutput cannot clobber someone else's work.
+  scratch_gdb: C:/GIS/Scratch.gdb
+  name_prefix: dm_
+  log_file: C:/GIS/dem-mosaic/dem_mosaic.log
+
+# SDE connection files. READ ONLY. Sources are read via Raster.sde, boundaries via
+# Vector.sde. Nothing in this project writes to SDE.
+sde:
+  raster: F:/GIS/DB_CONNECT/Raster.sde
+  vector: F:/GIS/DB_CONNECT/Vector.sde
+
+# ---------------------------------------------------------------------------
+# Target grid. Everything gets projected + snapped to this before mosaicking.
+# ---------------------------------------------------------------------------
+target:
+  # 26910 = NAD83 / UTM 10N (m): three of four sources are already in it, only the USGS
+  # bathy (UTM 11N) gets reprojected.
+  wkid: 26910
+  # 1 m: the 2022 lidar (0.73 x 0.68 m) cannot honestly support 0.5 m, and the 0.5 m
+  # nearshore grid downsamples cleanly. The 2 m 2010 and 10 m bathy are interpolated up.
+  cell_size_m: 1.0
+  z_units: m                  # all sources converted to meters before mosaic
+  nodata: -9999
+  # Snap raster: leave null to snap to the highest-priority terrestrial source (2022).
+  snap_raster: null
+  # Output extent = boundary polygon (below) unioned with lake polygon, plus buffer.
+  extent_buffer_m: 100
+  # Test box [xmin, ymin, xmax, ymax] in target CRS meters. When set, the whole
+  # notebook runs on this box only. null = full basin. The example is ~4 x 4 km
+  # around Sand Harbor where all four sources overlap; adjust to taste.
+  test_extent: null   # e.g. [762000, 4338000, 766000, 4342000]
+  pixel_type: 32_BIT_FLOAT
+  compression: LZW
+  # Sanity range (m). Lake bottom ~1,397 m, Freel Peak 3,317 m. Anything outside is
+  # a unit mistake or an unmasked NoData sentinel and gets nulled.
+  plausible_z_m: [1300, 3400]
+
+# ---------------------------------------------------------------------------
+# Water-surface detection for terrestrial lidar (step 5). The lake polygon is
+# eroded inward by offshore_erode_m so the sample contains no beach, then the
+# median elevation of each terrestrial raster inside that core is its water
+# surface, in its own datum. No gauge reading or LTD conversion involved.
+# ---------------------------------------------------------------------------
+cleaning:
+  offshore_erode_m: 300
+  sample_points: 20000
+
+# ---------------------------------------------------------------------------
+# Reference polygons. Can be SDE feature classes (read-only), REST layers exported
+# to a local gdb, or shapefiles. Used to build the land/water priority zones.
+# ---------------------------------------------------------------------------
+boundaries:
+  trpa_boundary: F:/GIS/DB_CONNECT/Vector.sde/SDE.Jurisdictions/SDE.TRPA_bdy
+  # Lake polygon at legal max 6229.1 ft LTD. Used for the output extent and the
+  # land/water zone split. Terrestrial lidar is NOT hard-masked by it; exposed beach
+  # between the acquisition-date waterline and this polygon is kept.
+  lake_high_water: F:/GIS/DB_CONNECT/Vector.sde/SDE.Water/SDE.LakeTahoe_At_HighWater
+  # Optional: other hydro-flattened water bodies to exclude from terrestrial lidar
+  # (Fallen Leaf, Cascade, Echo, Marlette, Spooner, reservoirs). Candidate:
+  # F:/GIS/DB_CONNECT/Vector.sde/SDE.Water/SDE.Water_Bodies (408 polygons, includes
+  # Lake Tahoe itself, so it would need a selection). Leave null to skip: without
+  # bathy for those lakes, stripping only trades a flat surface for a hole.
+  other_waterbodies: null
+
+# ---------------------------------------------------------------------------
+# Sources. Order here does NOT set priority (see priority block).
+# vertical_offset_m: 'auto' takes the value solved in step 3 (see qa block); a
+# number overrides it. It is ADDED to the source after unit conversion, in step 5.
+# The reference source should stay at 0.0.
+# water_strip_tol_m (terrestrial only): cells inside the lake polygon at or below
+# detected water surface + this tolerance are nulled. Tight for a hydro-flattened
+# product, wider for an un-flattened one where the surface is noisy.
+# ---------------------------------------------------------------------------
+sources:
+  lidar_2022:
+    path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_BareEarth_LiDAR_2022
+    label: 2022 terrestrial LiDAR
+    type: terrestrial
+    year: 2022
+    native_cell_m: 0.7      # SDE copy is 0.728 x 0.676 m (non-square): a projected resample of the vendor grid
+    h_datum: NAD83 UTM 10N (EPSG 26910)   # from file; realization (2011?) not recorded
+    v_datum: TODO           # not in file. Likely NAVD88 GEOID18; confirm from vendor report
+    z_units: m              # from value range (1,888 to 3,317)
+    vertical_offset_m: 0.0  # reference: defines the output vertical datum
+    hydro_flattened: false  # water surface is noisy interpolation between sparse returns
+    water_strip_tol_m: 0.5
+    id: 1
+
+  lidar_2010:
+    path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_BareEarth_LiDAR_2010
+    label: 2010 terrestrial LiDAR
+    type: terrestrial
+    year: 2010
+    native_cell_m: 2.0      # from file
+    h_datum: NAD83 UTM 10N (EPSG 26910)   # from file
+    v_datum: TODO           # not in file. Likely NAVD88 with GEOID09 -> decimeter offset vs GEOID18 possible
+    z_units: m              # from value range (1,881 to 3,317)
+    vertical_offset_m: auto
+    hydro_flattened: true   # single constant elevation over the lake
+    water_strip_tol_m: 0.15
+    id: 2
+
+  green_2020:
+    path: F:/GIS/DB_CONNECT/Raster.sde/SDE.Nearshore_BareEarth_DEM
+    label: 2020 topobathymetric (green) LiDAR
+    type: topobathy
+    year: 2020
+    native_cell_m: 0.5      # from file
+    h_datum: NAD83 UTM 10N (EPSG 26910)   # from file
+    v_datum: TODO           # not in file
+    z_units: m              # from value range (1,885 to 2,042). Min is only ~13 m below lake level.
+    vertical_offset_m: auto
+    hydro_flattened: false
+    # Optional absolute elevation floor (m). Bottom returns near the penetration
+    # limit get noisy/sparse; null cells below this so the sonar takes over.
+    # File min is 1,884.6 m. null = keep all valid.
+    floor_elev_m: null
+    id: 3
+
+  sonar_1999:
+    # This SDE raster is a USGS bathy + topo merge in FEET on UTM 11N (max 10,052 ft is a
+    # mountain, min 4,593 ft is the lake floor). The topo skin never competes: type bathy is
+    # clipped to the lake polygon in the cleaning step.
+    path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_USGS_DeepWaterBathyTopo
+    label: 1999 USGS multibeam sonar bathymetry
+    type: bathy
+    year: 1999
+    native_cell_m: 10.0     # from file
+    h_datum: NAD83 UTM 11N (EPSG 26911)   # from file. Different zone from the others.
+    v_datum: TODO           # not in file. Depths were relative to lake surface at survey time -> confirm conversion
+    z_units: ft             # from value range (4,593 to 10,053)
+    vertical_offset_m: auto
+    hydro_flattened: false
+    # Focal smoothing before upsampling to hide track-line artifacts. null = off.
+    smooth_window_cells: 3
+    id: 4
+
+# ---------------------------------------------------------------------------
+# Priority. First valid (non-NoData) source wins, per zone.
+#   land  = inside TRPA boundary, outside high-water polygon
+#   water = inside high-water polygon
+# Terrestrial sources inside "water" are still valid on exposed beach above the
+# acquisition-date waterline; the water-surface strip handles the rest.
+# ---------------------------------------------------------------------------
+priority:
+  land:  [lidar_2022, lidar_2010, green_2020, sonar_1999]
+  water: [green_2020, lidar_2022, lidar_2010, sonar_1999]
+
+# Optional seam feathering. Blends the winning source into the runner-up over
+# this distance (m) from the winner's data edge. 0 = hard cutlines.
+blend:
+  feather_m: 0
+
+# ---------------------------------------------------------------------------
+# Vertical datum reconciliation (step 3). The reference source defines the output
+# vertical datum. Each [source, against] pair in offset_chain is solved in order:
+# offset(source) = offset(against) - median(source - against) over stable ground,
+# so 'against' must be the reference or already solved. Results go to
+# outputs/resolved_offsets.yaml and are picked up by every source whose
+# vertical_offset_m is 'auto'.
+#
+# Why this chain: 2010 and 2022 share most of the land. The green lidar has a
+# topo skin, so it aligns to 2022 on beaches and low-slope shore land. The USGS
+# bathy is compared with the green lidar underwater, in the 5-13 m band both cover.
+# ---------------------------------------------------------------------------
+qa:
+  reference: lidar_2022
+  offset_chain:
+    - [lidar_2010, lidar_2022]
+    - [green_2020, lidar_2022]
+    - [sonar_1999, green_2020]
+  sample_points: 20000
+  max_slope_deg: 10       # land pairs only: steep ground turns horizontal misregistration into vertical error
+  min_samples: 500        # fewer usable samples than this -> offset left unsolved
+  diff_flag_m: 0.5        # LARGE_SHIFT flag when |median| exceeds this
+  tilt_flag_m: 0.2        # TILT flag when a fitted plane changes by more than this across the overlap
+
+outputs:
+  # COG GeoTIFFs cannot live inside a gdb, so final products go to a folder beside Scratch.gdb
+  dir: C:/GIS/dem-mosaic
+  dem: tahoe_dem_mosaic_1m.tif
+  source_id: tahoe_dem_mosaic_source.tif
+  hillshade: tahoe_dem_mosaic_hs.tif
