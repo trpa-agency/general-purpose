@@ -390,9 +390,10 @@ class Pipeline:
         name = f"diff_{src}_{ref}"
         diff.save(self.path(name))
         pts = self.sample_points(f"qa_{src}_{ref}", diff.extent, qa["sample_points"])
-        ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"], [zone, "zone"]])
+        ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"], [zone, "zone"],
+                                         [self.path(f"{ref}_std"), "zref"]])
         df = pd.DataFrame(arcpy.da.FeatureClassToNumPyArray(
-            pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone"], skip_nulls=True))
+            pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"], skip_nulls=True))
         df = df.rename(columns={"SHAPE@X": "x", "SHAPE@Y": "y"})
         n_raw = len(df)
 
@@ -424,6 +425,23 @@ class Pipeline:
         span = tilt * max(df["x"].max() - df["x"].min(), df["y"].max() - df["y"].min())
 
         offset = offsets[ref] - med   # aligned(src) = std(src) + offset; median(aligned diff) -> 0
+
+        # Elevation-band breakdown: does the difference drift with depth / elevation? For an
+        # underwater pair, a trend toward shore points at interpolated shallow sonar; a trend
+        # with depth points at sound-velocity or refraction bias. Written next to overlap_qa.csv.
+        band = 2.0 if want_zone == 2 else 50.0
+        bins = (np.floor(df["zref"] / band) * band).astype(int)
+        by_band = (df.assign(band=bins).groupby("band")["dz"]
+                   .agg(n="size", median="median", iqr=lambda s: s.quantile(0.75) - s.quantile(0.25))
+                   .reset_index().rename(columns={"band": f"{ref}_elev_band_m"}))
+        by_band.insert(0, "pair", f"{src} vs {ref}")
+        self._band_rows.append(by_band)
+        dz_per_m = float(np.polyfit(df["zref"], dz, 1)[0])
+        if want_zone == 2:
+            log.info("%s vs %s: median dz by %s elevation band (m):\n%s", src, ref, ref,
+                     by_band.to_string(index=False))
+            log.info("%s vs %s: dz changes %+.3f m per m of elevation (%+.2f m per 10 m of depth)",
+                     src, ref, dz_per_m, -dz_per_m * 10)
         flags = []
         if abs(med) > float(qa["diff_flag_m"]):
             flags.append("LARGE_SHIFT")
@@ -431,7 +449,7 @@ class Pipeline:
             flags.append("TILT")
         row.update(median=med, iqr=float(q[0.75] - q[0.25]), p05=float(q[0.05]), p95=float(q[0.95]),
                    mean=float(dz.mean()), std=float(dz.std()), tilt_m_per_km=tilt * 1000,
-                   tilt_span_m=span, offset_m=offset, flag=" ".join(flags))
+                   tilt_span_m=span, dz_per_m_elev=dz_per_m, offset_m=offset, flag=" ".join(flags))
         log.info("%s vs %s (%s): median %+.3f m, IQR %.3f m, tilt %.3f m/km (%.2f m across overlap), "
                  "n=%d/%d -> offset %+.3f m %s", src, ref, row["zone"], med, row["iqr"],
                  row["tilt_m_per_km"], span, n, n_raw, offset, row["flag"])
@@ -447,6 +465,7 @@ class Pipeline:
             raise SystemExit(f"reference {ref} not standardized; run step 2")
         offsets = {ref: 0.0}
         rows = []
+        self._band_rows = []
         for src, against in qa["offset_chain"]:
             if src not in self.active or against not in self.active:
                 log.warning("chain pair %s vs %s skipped: source not active", src, against)
@@ -458,6 +477,8 @@ class Pipeline:
         table = pd.DataFrame(rows)
         suffix = "_test" if self.test else ""
         table.to_csv(self.out_dir / f"overlap_qa{suffix}.csv", index=False)
+        if self._band_rows:
+            pd.concat(self._band_rows).to_csv(self.out_dir / f"overlap_qa_by_band{suffix}.csv", index=False)
         resolved = {k: round(float(v), 4) for k, v in offsets.items()}
         self.resolved_offsets_file().write_text(
             yaml.safe_dump(dict(reference=ref, note="offset_m is ADDED to the standardized raster; "
