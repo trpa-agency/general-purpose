@@ -613,8 +613,12 @@ class Pipeline:
         return df
 
     # ---- step 6 --------------------------------------------------------------
-    def _first_valid(self, keys):
-        feather = float(self.cfg["blend"]["feather_m"] or 0)
+    def _first_valid(self, keys, zone_name):
+        blend = self.cfg["blend"]
+        feather = float(blend["feather_m"] or 0)
+        if zone_name not in (blend.get("feather_zones") or ["land", "water"]):
+            feather = 0.0
+        log.info("%s chain %s: feather %.0f m", zone_name, keys, feather)
         keys = [k for k in keys if self.exists(f"{k}_clean")]
         if not keys:
             raise SystemExit("no cleaned sources found; run step 5")
@@ -642,8 +646,8 @@ class Pipeline:
             log.info("mosaic exists, skipping")
             return
         zone = self.zone
-        land_val, land_sid = self._first_valid(self.cfg["priority"]["land"])
-        water_val, water_sid = self._first_valid(self.cfg["priority"]["water"])
+        land_val, land_sid = self._first_valid(self.cfg["priority"]["land"], "land")
+        water_val, water_sid = self._first_valid(self.cfg["priority"]["water"], "water")
         dem = Con(zone == 1, land_val, Con(zone == 2, water_val))
         sid = Con(zone == 1, land_sid, Con(zone == 2, water_sid))
         sid = SetNull(sid == 0, Int(sid))
