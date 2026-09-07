@@ -154,10 +154,13 @@ priority:
   land:  [lidar_2022, lidar_2010, green_2020, sonar_1999]
   water: [green_2020, lidar_2022, lidar_2010, sonar_1999]
 
-# Optional seam feathering. Blends the winning source into the runner-up over
-# this distance (m) from the winner's data edge. 0 = hard cutlines.
+# Seam feathering. Blends the winning source into the runner-up over this
+# distance (m) from the winner's data edge. 0 = hard cutlines.
+# Set to 100 after the Kings Beach test showed sonar-vs-green scatter of
+# IQR 1.3-1.9 m with no depth trend: the handoff at the green lidar's depth
+# limit needs a ramp, not a step. Costs one Euclidean distance pass per source.
 blend:
-  feather_m: 0
+  feather_m: 100
 
 # ---------------------------------------------------------------------------
 # Vertical datum reconciliation (step 3). The reference source defines the output
