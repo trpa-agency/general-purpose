@@ -201,8 +201,17 @@ class Pipeline:
 
     @property
     def lake_core(self):
+        """Lake polygon eroded inward, clipped to the run extent so samples land on the run's rasters."""
         d = self.cfg["cleaning"]["offshore_erode_m"]
-        return self._fc("lake_core", lambda o: arcpy.analysis.Buffer(self.lake, o, f"-{d} Meters"))
+
+        def build(out):
+            full = self._fc("lake_core_full", lambda o: arcpy.analysis.Buffer(self.lake, o, f"-{d} Meters"))
+            e = self.ensure_extent()
+            box = arcpy.Polygon(arcpy.Array([arcpy.Point(e.XMin, e.YMin), arcpy.Point(e.XMin, e.YMax),
+                                             arcpy.Point(e.XMax, e.YMax), arcpy.Point(e.XMax, e.YMin),
+                                             arcpy.Point(e.XMin, e.YMin)]), self.target_sr)
+            arcpy.analysis.Clip(full, box, out)
+        return self._fc("lake_core_clip", build)
 
     def ensure_extent(self):
         """Set arcpy.env.extent to the AOI (or test box), rounded outward to whole cells."""
@@ -524,17 +533,31 @@ class Pipeline:
 
     # ---- step 5 --------------------------------------------------------------
     def water_surface_elev(self, key):
-        """Median elevation of a terrestrial raster over the open lake, in its own datum."""
+        """Median elevation of a terrestrial raster over the open lake, in its own datum.
+
+        Returns (median, mad, n), or (None, None, 0) when the product has no data over open
+        water, in which case there is no water surface to strip.
+        """
         cl = self.cfg["cleaning"]
-        pts = self.sample_points(f"ws_{key}", self.lake_core, cl["sample_points"])
+        core = self.lake_core
+        if int(arcpy.management.GetCount(core)[0]) == 0:
+            log.warning("%s: run extent contains no open-lake core; water surface not detected", key)
+            return None, None, 0
+        pts = self.sample_points(f"ws_{key}", core, cl["sample_points"])
         ExtractMultiValuesToPoints(pts, [[self.path(f"{key}_std"), "z"]])
         z = pd.DataFrame(arcpy.da.TableToNumPyArray(pts, ["z"], skip_nulls=True))["z"].to_numpy()
+        n_pts = int(arcpy.management.GetCount(pts)[0])
+        if len(z) == 0:
+            log.info("%s: NoData at all %d open-lake samples; product carries no water surface, nothing to strip",
+                     key, n_pts)
+            return None, None, 0
         if len(z) < 100:
-            raise RuntimeError(f"{key}: only {len(z)} valid samples inside the lake core; "
-                               "does this raster cover the lake / test extent?")
+            log.warning("%s: only %d of %d open-lake samples have data; water surface estimate is weak",
+                        key, len(z), n_pts)
         med = float(np.median(z))
         mad = float(np.median(np.abs(z - med)))
-        log.info("%s: water surface %.3f m (MAD %.3f m, n=%d)", key, med, mad, len(z))
+        log.info("%s: water surface %.3f m (MAD %.3f m, n=%d of %d samples with data)",
+                 key, med, mad, len(z), n_pts)
         return med, mad, len(z)
 
     def _clean_one(self, key, s, offset):
@@ -544,14 +567,19 @@ class Pipeline:
             # Water surface is detected on the un-shifted raster, then both shift together
             ws, mad, n = self.water_surface_elev(key)
             tol = float(s["water_strip_tol_m"])
-            if mad > tol:
-                log.warning("%s: MAD %.3f exceeds tolerance %.3f; water surface partly retained", key, mad, tol)
-            log.info("%s: nulling cells inside lake polygon at <= %.3f m (pre-offset)", key, ws + tol)
-            z = SetNull((self.lake_r == 1) & (z <= ws + tol), z)
+            if ws is None:
+                info.update(water_surface_m=None, water_surface_aligned_m=None, mad_m=None,
+                            n_samples=0, tol_m=tol, note="no data over open water; nothing stripped")
+            else:
+                if mad > tol:
+                    log.warning("%s: MAD %.3f exceeds tolerance %.3f; water surface partly retained",
+                                key, mad, tol)
+                log.info("%s: nulling cells inside lake polygon at <= %.3f m (pre-offset)", key, ws + tol)
+                z = SetNull((self.lake_r == 1) & (z <= ws + tol), z)
+                info.update(water_surface_m=ws, water_surface_aligned_m=ws + offset, mad_m=mad,
+                            n_samples=n, tol_m=tol)
             if self.other_r is not None:
                 z = SetNull(self.other_r == 1, z)
-            info.update(water_surface_m=ws, water_surface_aligned_m=ws + offset, mad_m=mad,
-                        n_samples=n, tol_m=tol)
         if offset:
             log.info("%s: applying vertical offset %+.3f m", key, offset)
             z = z + offset
