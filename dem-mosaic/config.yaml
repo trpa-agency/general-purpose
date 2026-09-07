@@ -161,6 +161,9 @@ priority:
 # limit needs a ramp, not a step. Costs one Euclidean distance pass per source.
 blend:
   feather_m: 100
+  # Zones whose priority chain gets feathered. Land is left out: 2022 and 2010
+  # agree within 5 cm, so feathering there only costs distance passes.
+  feather_zones: [water]
 
 # ---------------------------------------------------------------------------
 # Vertical datum reconciliation (step 3). The reference source defines the output
