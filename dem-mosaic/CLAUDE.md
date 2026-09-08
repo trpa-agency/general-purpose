@@ -22,6 +22,21 @@ Per-zone priority with NoData fall-through; a source-ID raster records provenanc
 - Env: `arcgispro-py3`, needs Spatial Analyst.
 - Full basin is ~1.3e9 cells per raster and takes hours. Always run `--steps 1-3 --test` first.
 
+## Run record
+
+First full-basin build completed 2026-09-08 (5.6 h: step 2 77 min, step 3 40 min, step 5 26 min,
+step 6 191 min with 300 m water feather, step 7 38 min, step 8 41 min). Extent 737568 4288093
+771053 4357403, 2.32e9 cells. Outputs in `C:\GIS\dem-mosaic`.
+
+Solved offsets relative to 2022 lidar: 2010 -0.02 m, green -0.05 m, USGS bathy +1.17 m (from its
+topo skin on land; consistent with NGVD29). Area by source: 2022 802 km2, 2010 51, green 33,
+sonar 466. 15 NoData cells in the AOI.
+
+Known weakness: the 1999 USGS grid is interpolated fill in the 0-13 m band (sonar minus green
+grows ~2.9 m per 10 m of depth basin-wide, flat at Kings Beach). The green-to-sonar handoff
+near 13 m depth is a 2-3 m step in places, ramped over 300 m. Proper fix needs the original
+multibeam coverage polygon so the sonar can be restricted to surveyed cells.
+
 ## Design decisions (do not silently undo)
 
 - Vertical datums are reconciled empirically in step 3: 2022 lidar is the reference, other
