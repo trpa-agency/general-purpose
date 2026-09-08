@@ -204,6 +204,40 @@ qa:
   diff_flag_m: 0.5        # LARGE_SHIFT flag when |median| exceeds this
   tilt_flag_m_per_km: 0.05  # TILT flag when the fitted plane slopes more than this (basin-wide 0.004 is noise)
 
+# ---------------------------------------------------------------------------
+# Metadata (scripts/write_metadata.py). Numbers (offsets, areas, seam stats,
+# extent, dates) are read from the run outputs; this block holds the human parts.
+# ---------------------------------------------------------------------------
+metadata:
+  title: Lake Tahoe Basin Bare-Earth DEM, 1 meter (2026 mosaic)
+  organization: Tahoe Regional Planning Agency (TRPA)
+  contact_name: Mason Bindl
+  contact_email: TODO           # agency contact address to publish
+  contact_phone: null
+  publish_date: "2026-09-08"
+  # Vertical datum statement for the product. It is the 2022 lidar's datum; fill in
+  # from the vendor report (likely NAVD88, GEOID18).
+  vertical_datum: TODO
+  credits: >
+    Tahoe Regional Planning Agency. Source data: 2022 and 2010 terrestrial lidar bare-earth
+    DEMs, 2020 topobathymetric lidar nearshore DEM, and U.S. Geological Survey Lake Tahoe
+    multibeam bathymetry (Gardner and others, 2000).
+  # One paragraph per source for the lineage section. Fill vendor, program, and dates.
+  source_citations:
+    lidar_2022: "TODO: vendor, program (e.g. USGS 3DEP project name), acquisition dates, reported vertical accuracy."
+    lidar_2010: "TODO: vendor, program, acquisition dates, reported vertical accuracy."
+    green_2020: "TODO: vendor, program, acquisition dates, reported depth penetration and accuracy."
+    sonar_1999: "U.S. Geological Survey multibeam bathymetric survey of Lake Tahoe (Gardner, Mayer, and Hughes Clarke, 2000), gridded at 10 m and merged by USGS with a topographic skin. TODO: confirm survey year and product citation."
+  use_limitations: >
+    Not for navigation. The nearshore band from roughly the 2020 topobathymetric lidar's
+    depth limit (about 13 m) outward is transitional: the 1999 bathymetric grid is
+    interpolated in shallow water and the mosaic ramps between the two sources over 300 m.
+    Elevations there may be in error by several meters. The deep lake is 10 m sonar data
+    resampled to 1 m; the 1 m cell size does not imply 1 m detail there. Consult the
+    companion source-ID raster to identify which source informs any cell. Vertical datum
+    of the bathymetric source was inferred, not documented; absolute deep-water elevations
+    carry roughly 1 m uncertainty.
+
 outputs:
   # COG GeoTIFFs cannot live inside a gdb, so final products go to a folder beside Scratch.gdb
   dir: C:/GIS/dem-mosaic
