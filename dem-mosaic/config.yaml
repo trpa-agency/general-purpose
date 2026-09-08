@@ -135,7 +135,12 @@ sources:
     year: 1999
     native_cell_m: 10.0     # from file
     h_datum: NAD83 UTM 11N (EPSG 26911)   # from file. Different zone from the others.
-    v_datum: TODO           # not in file. Depths were relative to lake surface at survey time -> confirm conversion
+    # Basin run 2026-09-07: topo skin vs 2022 lidar on low-slope land = -1.19 m
+    # (n=1705), i.e. ~3.9 ft, the NGVD29 -> NAVD88 shift here. Solved offset +1.19 m
+    # assumes the bathy half shares the skin's datum; the shelf diagnostic cannot
+    # confirm that because the 0-13 m zone of this grid is interpolated fill.
+    # Worst case is ~1 m in 100-500 m deep water.
+    v_datum: NGVD29 (inferred from -1.19 m vs 2022 on land)
     z_units: ft             # from value range (4,593 to 10,053)
     vertical_offset_m: auto
     hydro_flattened: false
