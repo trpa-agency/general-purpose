@@ -412,18 +412,26 @@ class Pipeline:
         n_pts = int(qa["sample_points"])
         n_cap = int(qa.get("max_sample_points", 500000))
         min_n = int(qa["min_samples"])
-        cols = ["x", "y", "dz", "slope", "zone", "zref"]
+        # Slope comes from the basin reference (2022 lidar), which is NoData over the lake, so it
+        # is only extracted for land pairs; requiring it underwater would discard every point.
+        use_slope = want_zone == 1
+        extract = [[self.path(name), "dz"], [zone, "zone"], [self.path(f"{ref}_std"), "zref"]]
+        fields = ["SHAPE@X", "SHAPE@Y", "dz", "zone", "zref"]
+        cols = ["x", "y", "dz", "zone", "zref"]
+        if use_slope:
+            extract.append([self.ref_slope, "slope"])
+            fields.append("slope")
+            cols.append("slope")
         while True:
             pts = self.sample_points(f"qa_{src}_{ref}", diff.extent, n_pts)
-            ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"],
-                                             [zone, "zone"], [self.path(f"{ref}_std"), "zref"]])
+            ExtractMultiValuesToPoints(pts, extract)
             # SearchCursor rather than FeatureClassToNumPyArray: the latter intermittently raises
             # "cannot create NumPyArray. geometry type found" on these point sets.
-            with arcpy.da.SearchCursor(pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"]) as cur:
+            with arcpy.da.SearchCursor(pts, fields) as cur:
                 df = pd.DataFrame([r for r in cur if None not in r], columns=cols).astype(float)
             n_raw = len(df)
             df = df[(df["zone"] == want_zone) & (df["dz"].abs() < 50)]
-            if want_zone == 1:
+            if use_slope:
                 df = df[df["slope"] <= float(qa["max_slope_deg"])]
             n = len(df)
             if n >= min_n or n_pts >= n_cap:
