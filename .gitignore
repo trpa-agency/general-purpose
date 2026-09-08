@@ -22,6 +22,9 @@ lidar-download/LAZ_downloads/
 .env
 *.sde
 
+# Claude Code local state (worktrees, local settings)
+.claude/
+
 # Python
 __pycache__/
 *.pyc
