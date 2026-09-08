@@ -401,9 +401,12 @@ class Pipeline:
         pts = self.sample_points(f"qa_{src}_{ref}", diff.extent, qa["sample_points"])
         ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"], [zone, "zone"],
                                          [self.path(f"{ref}_std"), "zref"]])
-        df = pd.DataFrame(arcpy.da.FeatureClassToNumPyArray(
-            pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"], skip_nulls=True))
-        df = df.rename(columns={"SHAPE@X": "x", "SHAPE@Y": "y"})
+        # SearchCursor rather than FeatureClassToNumPyArray: the latter intermittently raises
+        # "cannot create NumPyArray. geometry type found" on these point sets.
+        cols = ["x", "y", "dz", "slope", "zone", "zref"]
+        with arcpy.da.SearchCursor(pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"]) as cur:
+            df = pd.DataFrame([r for r in cur if None not in r], columns=cols)
+        df = df.astype(float)
         n_raw = len(df)
 
         # Terrestrial lidar over the lake is a water surface, so any pair involving one is
@@ -545,7 +548,8 @@ class Pipeline:
             return None, None, 0
         pts = self.sample_points(f"ws_{key}", core, cl["sample_points"])
         ExtractMultiValuesToPoints(pts, [[self.path(f"{key}_std"), "z"]])
-        z = pd.DataFrame(arcpy.da.TableToNumPyArray(pts, ["z"], skip_nulls=True))["z"].to_numpy()
+        with arcpy.da.SearchCursor(pts, ["z"]) as cur:
+            z = np.array([r[0] for r in cur if r[0] is not None], dtype=float)
         n_pts = int(arcpy.management.GetCount(pts)[0])
         if len(z) == 0:
             log.info("%s: NoData at all %d open-lake samples; product carries no water surface, nothing to strip",
@@ -718,7 +722,8 @@ class Pipeline:
         pts = self.sample_points("qa_seam_pts", self.ensure_extent(), self.cfg["qa"]["sample_points"] * 4)
         ExtractMultiValuesToPoints(pts, [[self.path("seam_mask"), "seam"], [self.path("dem_range3"), "rng"],
                                          [sid, "src"]])
-        df = pd.DataFrame(arcpy.da.TableToNumPyArray(pts, ["seam", "rng", "src"], skip_nulls=True))
+        with arcpy.da.SearchCursor(pts, ["seam", "rng", "src"]) as cur:
+            df = pd.DataFrame([r for r in cur if None not in r], columns=["seam", "rng", "src"]).astype(float)
         seams = df.groupby("seam")["rng"].describe(percentiles=[0.5, 0.9, 0.99])
         log.info("3x3 elevation range, seam (1) vs elsewhere (0):\n%s", seams.to_string())
 
