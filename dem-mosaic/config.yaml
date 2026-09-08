@@ -160,7 +160,10 @@ priority:
 # IQR 1.3-1.9 m with no depth trend: the handoff at the green lidar's depth
 # limit needs a ramp, not a step. Costs one Euclidean distance pass per source.
 blend:
-  feather_m: 100
+  # 300 m: the green-to-sonar handoff at ~13 m depth is a 2-3 m step where the
+  # 1999 grid is interpolated fill. Over 300 m that becomes a ~1 percent ramp,
+  # a slope rather than a ledge. It is a compromise over a zone with no good data.
+  feather_m: 300
   # Zones whose priority chain gets feathered. Land is left out: 2022 and 2010
   # agree within 5 cm, so feathering there only costs distance passes.
   feather_zones: [water]
@@ -175,14 +178,20 @@ blend:
 #
 # Why this chain: 2010 and 2022 share most of the land. The green lidar has a
 # topo skin, so it aligns to 2022 on beaches and low-slope shore land. The USGS
-# bathy is compared with the green lidar underwater, in the 5-13 m band both cover.
+# product also has a topo skin, so its datum is solved on land against 2022.
+# Its bathy vs the green lidar in the 0-13 m band is kept as a diagnostic only:
+# the basin run showed the difference growing ~2.7 m per 10 m of depth (flat at
+# Kings Beach), i.e. the 1999 grid is interpolated fill in most of that band and
+# an offset measured there would be measured against fill, not data.
+# A third element "diagnostic" reports a pair without using it to set an offset.
 # ---------------------------------------------------------------------------
 qa:
   reference: lidar_2022
   offset_chain:
     - [lidar_2010, lidar_2022]
     - [green_2020, lidar_2022]
-    - [sonar_1999, green_2020]
+    - [sonar_1999, lidar_2022]
+    - [sonar_1999, green_2020, diagnostic]
   sample_points: 20000    # initial random points over each pair's overlap bounding box
   max_sample_points: 500000  # grown x5 at a time until min_samples are usable, up to this
   max_slope_deg: 10       # land pairs only: steep ground turns horizontal misregistration into vertical error

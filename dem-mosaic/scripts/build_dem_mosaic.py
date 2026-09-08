@@ -499,13 +499,19 @@ class Pipeline:
         offsets = {ref: 0.0}
         rows = []
         self._band_rows = []
-        for src, against in qa["offset_chain"]:
+        for entry in qa["offset_chain"]:
+            src, against = entry[0], entry[1]
+            diagnostic = len(entry) > 2 and str(entry[2]).lower() == "diagnostic"
             if src not in self.active or against not in self.active:
                 log.warning("chain pair %s vs %s skipped: source not active", src, against)
                 continue
             row, off = self._solve_pair(src, against, offsets)
+            row["role"] = "diagnostic" if diagnostic else "solve"
             rows.append(row)
-            if off is not None:
+            if diagnostic:
+                log.info("%s vs %s is diagnostic only; offset for %s stays %s", src, against, src,
+                         f"{offsets[src]:+.3f}" if src in offsets else "unsolved")
+            elif off is not None:
                 offsets[src] = off
         table = pd.DataFrame(rows)
         suffix = "_test" if self.test else ""
