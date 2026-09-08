@@ -183,11 +183,12 @@ qa:
     - [lidar_2010, lidar_2022]
     - [green_2020, lidar_2022]
     - [sonar_1999, green_2020]
-  sample_points: 20000
+  sample_points: 20000    # initial random points over each pair's overlap bounding box
+  max_sample_points: 500000  # grown x5 at a time until min_samples are usable, up to this
   max_slope_deg: 10       # land pairs only: steep ground turns horizontal misregistration into vertical error
   min_samples: 500        # fewer usable samples than this -> offset left unsolved
   diff_flag_m: 0.5        # LARGE_SHIFT flag when |median| exceeds this
-  tilt_flag_m: 0.2        # TILT flag when a fitted plane changes by more than this across the overlap
+  tilt_flag_m_per_km: 0.05  # TILT flag when the fitted plane slopes more than this (basin-wide 0.004 is noise)
 
 outputs:
   # COG GeoTIFFs cannot live inside a gdb, so final products go to a folder beside Scratch.gdb

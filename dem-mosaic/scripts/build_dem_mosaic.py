@@ -392,38 +392,51 @@ class Pipeline:
             if not self.exists(f"{k}_std"):
                 raise SystemExit(f"{k}: standardized raster missing; run step 2")
         if ref not in offsets:
-            raise SystemExit(f"offset chain: {ref} must be the reference or solved before {src}")
+            log.error("%s vs %s: %s has no solved offset yet, so this pair cannot be solved. Fix the "
+                      "earlier link, reorder qa.offset_chain, or set vertical_offset_m manually.",
+                      src, ref, ref)
+            return dict(source=src, reference=ref, flag="UNSOLVED_REFERENCE"), None
 
         zone = self.zone.catalogPath   # builds AOI / lake masks and zone raster on first use
         diff = arcpy.Raster(self.path(f"{src}_std")) - arcpy.Raster(self.path(f"{ref}_std"))
         name = f"diff_{src}_{ref}"
         diff.save(self.path(name))
-        pts = self.sample_points(f"qa_{src}_{ref}", diff.extent, qa["sample_points"])
-        ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"], [zone, "zone"],
-                                         [self.path(f"{ref}_std"), "zref"]])
-        # SearchCursor rather than FeatureClassToNumPyArray: the latter intermittently raises
-        # "cannot create NumPyArray. geometry type found" on these point sets.
-        cols = ["x", "y", "dz", "slope", "zone", "zref"]
-        with arcpy.da.SearchCursor(pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"]) as cur:
-            df = pd.DataFrame([r for r in cur if None not in r], columns=cols)
-        df = df.astype(float)
-        n_raw = len(df)
 
         # Terrestrial lidar over the lake is a water surface, so any pair involving one is
         # compared on land only. Two underwater products are compared in the water zone.
         types = {self.src[src]["type"], self.src[ref]["type"]}
         want_zone = 2 if types <= {"topobathy", "bathy"} else 1
-        df = df[(df["zone"] == want_zone) & (df["dz"].abs() < 50)]
-        if want_zone == 1:
-            df = df[df["slope"] <= float(qa["max_slope_deg"])]
-        n = len(df)
+
+        # Random points cover the overlap's bounding box, and the usable overlap (green lidar
+        # on land, say) can be a sliver of it. Grow the sample until enough points are usable.
+        n_pts = int(qa["sample_points"])
+        n_cap = int(qa.get("max_sample_points", 500000))
+        min_n = int(qa["min_samples"])
+        cols = ["x", "y", "dz", "slope", "zone", "zref"]
+        while True:
+            pts = self.sample_points(f"qa_{src}_{ref}", diff.extent, n_pts)
+            ExtractMultiValuesToPoints(pts, [[self.path(name), "dz"], [self.ref_slope, "slope"],
+                                             [zone, "zone"], [self.path(f"{ref}_std"), "zref"]])
+            # SearchCursor rather than FeatureClassToNumPyArray: the latter intermittently raises
+            # "cannot create NumPyArray. geometry type found" on these point sets.
+            with arcpy.da.SearchCursor(pts, ["SHAPE@X", "SHAPE@Y", "dz", "slope", "zone", "zref"]) as cur:
+                df = pd.DataFrame([r for r in cur if None not in r], columns=cols).astype(float)
+            n_raw = len(df)
+            df = df[(df["zone"] == want_zone) & (df["dz"].abs() < 50)]
+            if want_zone == 1:
+                df = df[df["slope"] <= float(qa["max_slope_deg"])]
+            n = len(df)
+            if n >= min_n or n_pts >= n_cap:
+                break
+            n_pts = min(n_pts * 5, n_cap)
+            log.info("%s vs %s: %d usable of %d points; resampling with %d", src, ref, n, n_raw, n_pts)
 
         row = dict(source=src, reference=ref, zone="water" if want_zone == 2 else "land",
-                   n_raw=n_raw, n_used=n)
-        if n < int(qa["min_samples"]):
-            log.error("%s vs %s: only %d usable samples (min %d); offset NOT solved. Widen the "
-                      "extent, lower max_slope_deg, or set vertical_offset_m manually.",
-                      src, ref, n, qa["min_samples"])
+                   n_points=n_pts, n_raw=n_raw, n_used=n)
+        if n < min_n:
+            log.error("%s vs %s: only %d usable samples from %d points (min %d); offset NOT solved. "
+                      "Raise qa.max_sample_points, lower max_slope_deg, or set vertical_offset_m manually.",
+                      src, ref, n, n_pts, min_n)
             row.update(median=np.nan, offset_m=np.nan, flag="UNSOLVED")
             return row, None
 
@@ -457,7 +470,7 @@ class Pipeline:
         flags = []
         if abs(med) > float(qa["diff_flag_m"]):
             flags.append("LARGE_SHIFT")
-        if span > float(qa["tilt_flag_m"]):
+        if tilt * 1000 > float(qa["tilt_flag_m_per_km"]):
             flags.append("TILT")
         row.update(median=med, iqr=float(q[0.75] - q[0.25]), p05=float(q[0.05]), p95=float(q[0.95]),
                    mean=float(dz.mean()), std=float(dz.std()), tilt_m_per_km=tilt * 1000,
