@@ -339,8 +339,11 @@ class Pipeline:
                  geo_tf, transforms[:3])
 
         proj = self.path(f"{key}_proj")
+        resampling = str(s.get("resampling", "BILINEAR")).upper()   # BILINEAR or CUBIC; never NEAREST
+        if resampling == "NEAREST":
+            raise SystemExit(f"{key}: NEAREST resampling on an elevation surface is not allowed")
         with arcpy.EnvManager(snapRaster=snap, cellSize=self.cell, outputCoordinateSystem=self.target_sr):
-            arcpy.management.ProjectRaster(src, proj, self.target_sr, "BILINEAR", self.cell, geo_tf,
+            arcpy.management.ProjectRaster(src, proj, self.target_sr, resampling, self.cell, geo_tf,
                                            None if snap else "0 0", in_sr)
         z = arcpy.Raster(proj)
         if s["z_units"] == "ft":
