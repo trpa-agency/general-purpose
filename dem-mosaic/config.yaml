@@ -242,6 +242,7 @@ qa:
   max_sample_points: 500000  # grown x5 at a time until min_samples are usable, up to this
   max_slope_deg: 10       # land pairs only: steep ground turns horizontal misregistration into vertical error
   min_samples: 500        # fewer usable samples than this -> offset left unsolved
+  keep_diff_rasters: false  # true keeps the ~9 GB dm_diff_* rasters after step 3 for viewing a TILT in Pro
   diff_flag_m: 0.5        # LARGE_SHIFT flag when |median| exceeds this
   tilt_flag_m_per_km: 0.05  # TILT flag when the fitted plane slopes more than this (basin-wide 0.004 is noise)
 

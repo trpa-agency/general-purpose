@@ -31,6 +31,13 @@ Every step is idempotent: outputs already present in the scratch gdb are reused 
 earlier step's output builds it on demand if missing, so a crashed run resumes from
 wherever it died.
 
+Scratch hygiene: basin intermediates are ~9 GB each. Each step drops what the next step has
+consumed once its own output is saved (std after clean, clean after mosaic, mosaic after the
+COG exists, QA temporaries after their CSV), and a run that includes step 8 purges the rest of
+its prefix. Consequence: re-solving offsets (step 3) after step 5 has run means rerunning
+step 2. --keep retains everything; --purge [PREFIX] clears old runs by hand; step 2 refuses
+to start if a single raster cannot fit on the scratch drive.
+
 --test switches to target.test_extent from the config, prefixes all intermediates with
 "<name_prefix>test_" and suffixes exported files with "_test", so a test run never
 collides with a full-basin run in the same scratch gdb.
@@ -43,6 +50,7 @@ import argparse
 import logging
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -102,11 +110,12 @@ def timed(fn):
 
 # --------------------------------------------------------------------------- pipeline
 class Pipeline:
-    def __init__(self, cfg_path, test=False, force=False):
+    def __init__(self, cfg_path, test=False, force=False, keep=False):
         self.cfg_path = Path(cfg_path)
         self.cfg = yaml.safe_load(self.cfg_path.read_text(encoding="utf-8"))
         self.test = test
         self.force = force
+        self.keep = keep          # True: never delete intermediates from the scratch gdb
         c = self.cfg
 
         self.pfx = c["project"].get("name_prefix", "dm_")
@@ -176,6 +185,62 @@ class Pipeline:
     def out_file(self, key):
         stem, ext = os.path.splitext(self.cfg["outputs"][key])
         return str(self.out_dir / f"{stem}{'_test' if self.test else ''}{ext}")
+
+    # ---- scratch hygiene ------------------------------------------------------
+    # Basin-scale intermediates are ~9 GB each. Each step drops what the next step has
+    # consumed, once that step's own output is saved, so a crash still resumes from the last
+    # completed step. --keep disables all of it; --purge clears a whole run at once.
+    def drop(self, *names):
+        if self.keep:
+            return
+        for name in names:
+            full = self.path(name)
+            if not arcpy.Exists(full):
+                continue
+            try:
+                arcpy.management.Delete(full)
+                log.info("dropped %s", self.n(name))
+            except arcpy.ExecuteError as e:
+                log.warning("could not drop %s: %s", self.n(name), str(e).splitlines()[0][:120])
+
+    def purge(self, prefix):
+        """Delete every scratch item whose name starts with prefix, then compact the gdb."""
+        base = self.cfg["project"].get("name_prefix", "dm_")
+        if not prefix.startswith(base):
+            raise SystemExit(f"refusing to purge '{prefix}': must start with name_prefix '{base}'")
+        arcpy.env.workspace = self.scratch
+        items = ((arcpy.ListRasters(f"{prefix}*") or []) + (arcpy.ListFeatureClasses(f"{prefix}*") or [])
+                 + (arcpy.ListTables(f"{prefix}*") or []))
+        log.info("purging %d items with prefix '%s' from %s", len(items), prefix, self.scratch)
+        for it in items:
+            try:
+                arcpy.management.Delete(os.path.join(self.scratch, it))
+            except arcpy.ExecuteError as e:
+                log.warning("could not delete %s: %s", it, str(e).splitlines()[0][:120])
+        try:
+            arcpy.management.Compact(self.scratch)
+        except arcpy.ExecuteError as e:
+            log.warning("compact skipped: %s", str(e).splitlines()[0][:120])
+        log.info("purge done; free on %s: %.1f GB", Path(self.scratch).drive, self.free_gb())
+
+    def free_gb(self):
+        return shutil.disk_usage(Path(self.scratch).parent).free / 1e9
+
+    def check_disk(self, n_rasters):
+        """Refuse to start a step that cannot possibly fit; warn when it is tight."""
+        ext = self.ensure_extent()
+        cells = (ext.XMax - ext.XMin) * (ext.YMax - ext.YMin) / (self.cell ** 2)
+        per = cells * 4 / 1e9                    # float32, uncompressed
+        need = per * n_rasters * 0.6             # LZ77 typically lands well under this
+        free = self.free_gb()
+        log.info("disk: %.1f GB free on %s; this step writes ~%d rasters of up to %.1f GB each",
+                 free, Path(self.scratch).drive, n_rasters, per)
+        if free < per:
+            raise SystemExit(f"only {free:.1f} GB free; a single {per:.1f} GB raster will not fit. "
+                             f"Run with --purge <prefix> to clear old runs (see --help).")
+        if free < need:
+            log.warning("free space %.1f GB is below the ~%.0f GB this step may need; it may fail partway",
+                        free, need)
 
     # ---- lazily built dependencies (never force-rebuilt) --------------------
     def _fc(self, name, build):
@@ -250,15 +315,21 @@ class Pipeline:
                 log.warning("%s: no overlap with the run extent; treated as inactive for this run", key)
                 del self.active[key]
         if self.snap_key not in self.active:
-            raise SystemExit(f"snap source {self.snap_key} has no data in the run extent; move test_extent")
+            hint = "move target.test_extent" if self.test else "check its path in config.yaml"
+            raise SystemExit(f"snap source {self.snap_key} is inactive or has no data in the run extent; {hint}")
 
     @property
     def snap(self):
+        """A raster on the run grid to snap to. The reference's std raster defines the grid, but it
+        is dropped after step 5, so fall back to anything later that was built on the same grid."""
         s = self.cfg["target"].get("snap_raster")
         if s:
             return s
-        full = self.path(f"{self.snap_key}_std")
-        return full if arcpy.Exists(full) else None
+        for name in (f"{self.snap_key}_std", f"{self.snap_key}_clean", "dem_mosaic", "zone", "aoi_mask"):
+            full = self.path(name)
+            if arcpy.Exists(full):
+                return full
+        return None
 
     def ensure_grid(self):
         """Extent + snap raster, required by every step after standardize."""
@@ -386,6 +457,7 @@ class Pipeline:
     def step2_standardize(self):
         """Project + resample every source onto the target grid. Snap source first."""
         self.ensure_extent()
+        self.check_disk(n_rasters=len(self.active) + 1)   # each std plus one transient _proj
         order = [k for k in [self.snap_key] + list(self.active) if k in self.active]
         order = list(dict.fromkeys(order))
         for key in order:
@@ -556,6 +628,11 @@ class Pipeline:
         if unsolved:
             log.error("no offset solved for %s; step 5 will refuse them unless vertical_offset_m is set manually",
                       unsolved)
+        # Cleanup: sample points and the reference slope are spent. Difference rasters are only
+        # for viewing a TILT in Pro; keep them with qa.keep_diff_rasters: true.
+        self.drop(f"ref_slope_{ref}", *[f"qa_{e[0]}_{e[1]}" for e in qa["offset_chain"]])
+        if not qa.get("keep_diff_rasters", False):
+            self.drop(*[f"diff_{e[0]}_{e[1]}" for e in qa["offset_chain"]])
         return table
 
     def offsets(self):
@@ -666,6 +743,10 @@ class Pipeline:
                 log.info("%s: %s exists, skipping", key, self.clean_name(key))
                 continue
             infos.append(self._clean_one(key, s, offsets[key]))
+            # The clean raster now carries everything downstream needs; the std raster (and the
+            # water-surface sample points) are spent. Re-solving offsets later means rerunning step 2.
+            self.drop(f"{key}_std", f"ws_{key}")
+        self.drop("lake_core_clip", "lake_core_full")
         df = pd.DataFrame(infos)
         if len(df):
             df.to_csv(self.out_dir / f"water_surface{'_test' if self.test else ''}.csv", index=False)
@@ -713,6 +794,7 @@ class Pipeline:
         dem.save(self.path("dem_mosaic"))
         sid.save(self.path("dem_source"))
         log.info("saved %s and %s", self.n("dem_mosaic"), self.n("dem_source"))
+        self.drop(*[f"{k}_clean" for k in self.active])   # consumed by the mosaic
 
     # ---- step 7 --------------------------------------------------------------
     @timed
@@ -747,10 +829,13 @@ class Pipeline:
     def step8_result_qa(self):
         """Area by source, holes inside AOI, seam step statistics."""
         self.ensure_grid()
-        dem, sid = self.path("dem_mosaic"), self.path("dem_source")
+        # Prefer the scratch rasters; fall back to the exported COGs so this step can be rerun
+        # after the scratch copies have been dropped.
+        dem = self.path("dem_mosaic") if self.exists("dem_mosaic") else self.out_file("dem")
+        sid = self.path("dem_source") if self.exists("dem_source") else self.out_file("source_id")
         for p in (dem, sid):
             if not arcpy.Exists(p):
-                raise SystemExit(f"{p} missing; run step 6")
+                raise SystemExit(f"{p} missing; run steps 6 and 7")
         c2 = self.cell * self.cell
 
         arcpy.management.BuildRasterAttributeTable(sid, "Overwrite")
@@ -785,12 +870,29 @@ class Pipeline:
         suffix = "_test" if self.test else ""
         area.to_csv(self.out_dir / f"area_by_source{suffix}.csv", index=False)
         seams.to_csv(self.out_dir / f"seam_stats{suffix}.csv")
+        # QA temporaries are spent. The mosaic itself is only dropped once its COG exists.
+        self.drop("dem_holes", "seam_mask", "dem_range3", "qa_seam_pts")
+        if Path(self.out_file("dem")).exists() and Path(self.out_file("source_id")).exists():
+            self.drop("dem_mosaic", "dem_source")
         return area, n_holes, seams
 
     # ---- driver ---------------------------------------------------------------
     def run(self, steps):
         for s in steps:
             getattr(self, f"step{s}_{STEPS[s]}")()
+        if not self.keep and 8 in steps:
+            self.finalize()
+
+    def finalize(self):
+        """After step 8 only masks and polygons remain; they rebuild in seconds. Drop by name, never by
+        wildcard, so other runs sharing the base prefix (tests, the standalone DEM) are untouched."""
+        self.drop("zone", "aoi_mask", "lake_mask", "other_wb_mask", "aoi_buf", "aoi", "aoi_merge",
+                  "trpa_boundary_p", "lake_hw_p", "other_wb_p", "lake_core_clip", "lake_core_full")
+        try:
+            arcpy.management.Compact(self.scratch)
+        except arcpy.ExecuteError as e:
+            log.warning("compact skipped: %s", str(e).splitlines()[0][:120])
+        log.info("scratch cleaned; free on %s: %.1f GB", Path(self.scratch).drive, self.free_gb())
 
 
 def main(argv=None):
@@ -799,8 +901,16 @@ def main(argv=None):
     ap.add_argument("--steps", default="all", help='e.g. "all", "2-6", "1,3,8"')
     ap.add_argument("--test", action="store_true", help="run on target.test_extent with test_ prefix")
     ap.add_argument("--force", action="store_true", help="rebuild outputs of the selected steps")
+    ap.add_argument("--keep", action="store_true",
+                    help="keep every intermediate in the scratch gdb (default drops each once consumed)")
+    ap.add_argument("--purge", nargs="?", const="", metavar="PREFIX",
+                    help="delete scratch items with this prefix and exit; no value = this run's prefix. "
+                         "Use the bare name_prefix (e.g. dm_) to clear every run, tests included")
     args = ap.parse_args(argv)
-    p = Pipeline(args.config, test=args.test, force=args.force)
+    p = Pipeline(args.config, test=args.test, force=args.force, keep=args.keep)
+    if args.purge is not None:
+        p.purge(args.purge or p.pfx)
+        return
     p.run(parse_steps(args.steps))
 
 
