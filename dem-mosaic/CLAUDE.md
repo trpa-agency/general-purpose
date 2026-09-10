@@ -57,6 +57,24 @@ tiles it came from, fed as two sources so each is resampled exactly once by this
   `resampling_type` from the config, because a new mosaic dataset defaults to NEAREST and that
   is the artifact this rebuild exists to remove.
 
+## Scratch hygiene (2026-09-10)
+
+Basin intermediates are ~9 GB each and a run makes ~15 of them; the old basin run, two test
+boxes, and the standalone 2022 DEM together filled the scratch drive and ProjectRaster died
+with "Unspecified error". Now:
+
+- Each step drops what the next step consumed once its own output is saved: `*_std` after
+  `*_clean`, `*_clean` after the mosaic, the mosaic after its COG exists, QA temporaries after
+  their CSV, and masks/polygons after step 8. Nothing is dropped until its consumer is on disk,
+  so crashes still resume from the last completed step.
+- Consequence: re-solving offsets (step 3) after step 5 means rerunning step 2.
+- `--keep` retains everything. `--purge [PREFIX]` deletes by prefix and compacts; it refuses
+  prefixes that do not start with `dm_`. Bare `dm_` clears every run including tests.
+- Step 2 checks free space first and refuses to start if one raster cannot fit.
+- `build_2022_dem.py` purges its own `dm_dem22_` prefix after exporting.
+- Nothing in Scratch.gdb needs to survive between runs. The mosaic datasets live in
+  `C:\GIS\lidar2022.gdb`, products and offsets in `C:\GIS\dem-mosaic`.
+
 ## Design decisions (do not silently undo)
 
 - Vertical datums are reconciled empirically in step 3: 2022 lidar is the reference, other

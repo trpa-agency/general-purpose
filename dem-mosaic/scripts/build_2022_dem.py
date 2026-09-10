@@ -46,9 +46,10 @@ def main(argv=None):
                     help="null the hydro-flattened lake surface inside the high-water polygon")
     ap.add_argument("--test", action="store_true", help="run on target.test_extent, outputs suffixed _test")
     ap.add_argument("--force", action="store_true", help="rebuild projected halves and outputs")
+    ap.add_argument("--keep", action="store_true", help="keep the projected halves and merge in the scratch gdb")
     args = ap.parse_args(argv)
 
-    p = Pipeline(args.config, test=args.test, force=args.force)
+    p = Pipeline(args.config, test=args.test, force=args.force, keep=args.keep)
     cell = float(args.cell or p.cell)
     default_cell = abs(cell - p.cell) < 1e-9
     p.pfx = p.pfx + ("dem22_" if default_cell else f"dem22_{cell:g}m_".replace(".", "p"))
@@ -144,6 +145,9 @@ def main(argv=None):
     ])
     (out / f"{stem}.txt").write_text(prov + "\n", encoding="utf-8")
     log.info("wrote %s, %s, %s and %s", dem_tif, zone_tif, hs_tif, out / f"{stem}.txt")
+    # The COGs are the product; ~30 GB of scratch intermediates are now spent.
+    if not p.keep:
+        p.purge(p.pfx)
 
 
 if __name__ == "__main__":
