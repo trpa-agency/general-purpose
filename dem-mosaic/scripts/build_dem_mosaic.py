@@ -379,9 +379,9 @@ class Pipeline:
     @property
     def ref_slope(self):
         """Slope (degrees) of the reference source, used to keep offset samples on gentle ground."""
-        full = self.path("ref_slope")
+        ref = self.cfg["qa"]["reference"]
+        full = self.path(f"ref_slope_{ref}")   # keyed by reference so a changed reference never reuses a stale slope
         if not arcpy.Exists(full):
-            ref = self.cfg["qa"]["reference"]
             Slope(self.path(f"{ref}_std"), "DEGREE").save(full)
         return full
 

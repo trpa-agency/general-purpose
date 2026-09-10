@@ -28,7 +28,10 @@ from collections import defaultdict
 from pathlib import Path
 
 import arcpy
+import numpy as np
 import pandas as pd
+import yaml
+from arcpy.sa import ExtractMultiValuesToPoints
 
 REPO = Path(__file__).resolve().parent.parent
 AOI_CSV = REPO / "data" / "usgs_2022_tiles_in_aoi.csv"
@@ -58,15 +61,54 @@ def tile_zone(path):
 
 
 def sample_check(paths, n=4):
+    """Per-tile facts read from pixels, not metadata: OPR tiles often ship without statistics."""
     out = []
     for p in random.sample(paths, min(n, len(paths))):
         r = arcpy.Raster(str(p))
         sr = r.spatialReference
-        lo, hi = r.minimum, r.maximum
-        ok = lo is not None and Z_OK[0] <= lo and hi <= Z_OK[1]
-        out.append(dict(tile=p.name, crs=sr.name, vcs=(sr.VCS.name if sr.VCS else None), cell=r.meanCellWidth,
-                        pixel=r.pixelType, zmin=lo, zmax=hi, nodata=r.noDataValue, plausible=ok))
+        a = arcpy.RasterToNumPyArray(r, nodata_to_value=np.nan).astype(float)
+        v = a[np.isfinite(a)]
+        row = dict(tile=p.name, crs_zone=re.search(r"Zone_(\d+[NS])", sr.name or "").group(1) if sr.name else "?",
+                   vcs=(sr.VCS.name if sr.VCS else None), cell=r.meanCellWidth, pixel=r.pixelType,
+                   nodata_pct=round(100 * (1 - v.size / a.size), 1))
+        if v.size:
+            # A hydro-flattened tile holds one value over a large share of its area
+            vals, counts = np.unique(np.round(v, 3), return_counts=True)
+            modal, modal_share = float(vals[counts.argmax()]), counts.max() / v.size
+            row.update(zmin=round(float(v.min()), 2), zmax=round(float(v.max()), 2),
+                       modal_z=modal if modal_share > 0.02 else None,
+                       modal_pct=round(100 * modal_share, 1),
+                       plausible=bool(Z_OK[0] <= v.min() and v.max() <= Z_OK[1]))
+        else:
+            row.update(zmin=None, zmax=None, modal_z=None, modal_pct=None, plausible=False)
+        out.append(row)
     return pd.DataFrame(out)
+
+
+def verify_bare_earth(paths, ref_dem, n_tiles=3, n_pts=300):
+    """Compare sample tiles against the known bare-earth 2010 DEM.
+
+    Bare earth vs bare earth differs by centimetres to a metre or two (real change since 2010).
+    A first-return or surface model sits metres above it under forest, with a long positive tail.
+    """
+    rows = []
+    scratch = arcpy.env.scratchGDB
+    for i, p in enumerate(random.sample(paths, min(n_tiles, len(paths)))):
+        r = arcpy.Raster(str(p))
+        pts = arcpy.management.CreateRandomPoints(scratch, f"bechk_{i}", "", r.extent, n_pts)
+        arcpy.management.DefineProjection(pts, r.spatialReference)
+        ExtractMultiValuesToPoints(pts, [[str(p), "ztile"], [ref_dem, "zref"]])
+        with arcpy.da.SearchCursor(pts, ["ztile", "zref"]) as cur:
+            d = pd.DataFrame([x for x in cur if None not in x], columns=["ztile", "zref"]).astype(float)
+        arcpy.management.Delete(pts)
+        if len(d) < 20:
+            rows.append(dict(tile=p.name, n=len(d), note="too few overlapping points"))
+            continue
+        dz = d["ztile"] - d["zref"]
+        rows.append(dict(tile=p.name, n=len(d), median_dz=round(float(dz.median()), 2),
+                         p90_dz=round(float(dz.quantile(0.9)), 2), max_dz=round(float(dz.max()), 2),
+                         pct_over_3m=round(100 * float((dz > 3).mean()), 1)))
+    return pd.DataFrame(rows)
 
 
 def main(argv=None):
@@ -114,14 +156,25 @@ def main(argv=None):
         named = (aoi.set_index("tile").loc[[TILE_RE.search(p.name).group(1).upper() for p in paths], "zone"] == z).mean()
         print(f"  zone {z}: {len(paths)} tiles ({named*100:.0f}% also named in zone {z}), CRS {zone_sr[z].name}")
 
+    cfg = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
+    ref_dem = cfg["sources"]["lidar_2010"]["path"]
+    have_ref = arcpy.Exists(ref_dem)
+    if not have_ref:
+        print(f"\nnote: {ref_dem} unreachable; skipping the bare-earth comparison")
     for z, paths in sorted(by_zone.items()):
-        print(f"\nsample check, zone {z}:")
+        print(f"\nsample check, zone {z} (statistics read from pixels):")
         df = sample_check(paths)
         print(df.to_string(index=False))
         if not df["plausible"].all():
-            print("  WARNING: value range outside Tahoe ground elevations on some tiles; check product type / units")
-        if df["vcs"].isna().any():
-            print("  note: some tiles carry no vertical CRS; datum is NAVD88 per the USGS project")
+            print("  WARNING: values outside Tahoe ground elevations (1,880-3,320 m); check product type / units")
+        if df["modal_z"].notna().any():
+            print("  one value covers a large share of some tiles: hydro-flattened water surface, "
+                  "which step 5 of the pipeline strips")
+        if have_ref:
+            print(f"  bare-earth check against {cfg['sources']['lidar_2010']['label']}:")
+            print("  " + verify_bare_earth(paths, ref_dem).to_string(index=False).replace("\n", "\n  "))
+            print("  (bare earth: median near 0, few points over 3 m. A surface model sits metres higher "
+                  "under forest.)")
 
     if args.inventory_only:
         return
