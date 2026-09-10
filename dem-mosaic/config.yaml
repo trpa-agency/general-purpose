@@ -114,7 +114,15 @@ sources:
     vertical_offset_m: auto
     hydro_flattened: true
     water_strip_tol_m: 0.15
-    resampling: CUBIC       # rotated into zone 10; cubic suppresses moire better than bilinear
+    # Bilinear, same as the west half. This half rotates ~4 degrees into zone 10 (Tahoe sits 3
+    # degrees from each zone's central meridian), and a higher-order kernel would handle that
+    # rotation slightly better. Cubic is not used because it overshoots at discontinuities, and
+    # the hydro-flattened lake edge is a large one: overshoot above the water surface by more
+    # than water_strip_tol_m would survive the strip as a rim of spurious shoreline cells.
+    # Matching the west half also avoids a texture change across the zone seam, which crosses
+    # land at the north and south shores. If the east half looks aliased in the test-box
+    # hillshade, set CUBIC here and rerun step 2 for this source only.
+    resampling: BILINEAR
     id: 5
 
   lidar_2010:

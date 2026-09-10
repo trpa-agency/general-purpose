@@ -204,11 +204,16 @@ def main(argv=None):
             build_pyramids="NO_PYRAMIDS", calculate_statistics="NO_STATISTICS",
             duplicate_items_action="EXCLUDE_DUPLICATES", build_thumbnails="NO_THUMBNAILS",
             estimate_statistics="NO_STATISTICS")
+        # A new mosaic dataset resamples NEAREST by default. That is the artifact this rebuild
+        # exists to remove, so set it to the method this source uses in the pipeline.
+        key = f"lidar_2022_{'west' if z == 10 else 'east'}"
+        method = str(cfg["sources"].get(key, {}).get("resampling", "BILINEAR")).upper()
+        arcpy.management.SetMosaicDatasetProperties(md, resampling_type=method)
         # First-source-wins ordering does not matter within one zone (tiles do not overlap); keep default
         n = int(arcpy.management.GetCount(md)[0])
         r = arcpy.Raster(md)
-        print(f"  {name}: {n} items, cell {r.meanCellWidth} m, extent {r.extent.XMin:.0f} {r.extent.YMin:.0f} "
-              f"{r.extent.XMax:.0f} {r.extent.YMax:.0f}")
+        print(f"  {name}: {n} items, cell {r.meanCellWidth} m, resampling {method}, "
+              f"extent {r.extent.XMin:.0f} {r.extent.YMin:.0f} {r.extent.XMax:.0f} {r.extent.YMax:.0f}")
 
     print("\nconfig.yaml source paths:")
     for z in sorted(by_zone):
