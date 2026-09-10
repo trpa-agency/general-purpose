@@ -31,7 +31,6 @@ import datetime as dt
 from pathlib import Path
 
 import arcpy
-import yaml
 from arcpy.sa import Con, IsNull, SetNull, Hillshade, Int
 
 from build_dem_mosaic import Pipeline, log
@@ -73,19 +72,19 @@ def main(argv=None):
             log.info("%s: %s exists, reusing", key, p.n(name))
     arcpy.env.snapRaster = p.snap
 
-    # 2. East-vs-west offset from the pipeline's solved offsets, if step 3 has been run
+    # 2. East-vs-west offset resolved exactly as the mosaic pipeline resolves it: a number in the
+    #    config wins, 'auto' reads the pipeline's step-3 file. Keeps the two products consistent.
     offset = 0.0
-    f = p.resolved_offsets_file()
-    if EAST in halves and f.exists():
-        solved = yaml.safe_load(f.read_text(encoding="utf-8")).get("offsets", {})
-        if EAST in solved and WEST in solved:
-            offset = float(solved[EAST]) - float(solved[WEST])
-            log.info("applying solved east-vs-west offset %+.3f m from %s", offset, f)
-            if abs(offset) > 0.2:
-                log.warning("east-vs-west offset %+.3f m is large for one product in two zones; "
-                            "check overlap_qa before trusting this DEM", offset)
-    elif EAST in halves:
-        log.info("no resolved offsets file; east half used unshifted (expected offset is ~0)")
+    if EAST in halves:
+        try:
+            resolved = p.offsets()
+            offset = float(resolved[EAST]) - float(resolved[WEST])
+            log.info("east-vs-west offset %+.3f m (per config / resolved offsets)", offset)
+        except SystemExit as e:
+            log.warning("%s; east half used unshifted (expected offset is ~0)", e)
+        if abs(offset) > 0.2:
+            log.warning("east-vs-west offset %+.3f m is large for one product in two zones; "
+                        "check overlap_qa before trusting this DEM", offset)
 
     # 3. Merge: zone-10 wins where both have data
     west = arcpy.Raster(p.path(f"{WEST}_std"))
