@@ -109,7 +109,12 @@ class Pipeline:
         self.force = force
         c = self.cfg
 
-        self.pfx = c["project"].get("name_prefix", "dm_") + ("test_" if test else "")
+        self.pfx = c["project"].get("name_prefix", "dm_")
+        if test:
+            # Tag the prefix with the test box so masks, zone, lake core, slope and std rasters
+            # built for one box are never reused for another (they are all extent-dependent).
+            box = c["target"].get("test_extent") or [0, 0]
+            self.pfx += f"t{int(box[0] // 1000)}_{int(box[1] // 1000)}_"
         self.scratch = c["project"]["scratch_gdb"]
         self.out_dir = Path(c["outputs"]["dir"])
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -366,7 +371,12 @@ class Pipeline:
         out = self.path(f"{key}_std")
         z.save(out)
         arcpy.management.Delete(proj)
-        log.info("%s: saved %s", key, self.n(f"{key}_std"))
+        all_nodata = str(arcpy.management.GetRasterProperties(out, "ALLNODATA").getOutput(0)) == "1"
+        if all_nodata:
+            log.warning("%s: %s is entirely NoData in this extent; the source served no data here", key,
+                        self.n(f"{key}_std"))
+        else:
+            log.info("%s: saved %s", key, self.n(f"{key}_std"))
         return out
 
     @timed
