@@ -3,16 +3,23 @@ import numpy as np
 import arcpy
 
 SDE = r"F:\GIS\DB_CONNECT\Raster.sde"
-rasters = {"2022": SDE + r"\SDE.DEM_BareEarth_LiDAR_2022", "2010": SDE + r"\SDE.DEM_BareEarth_LiDAR_2010"}
-# Windows (lower-left x, y in UTM 10N): flat land north of Kings Beach shore, and a hillside above it
-windows = {"kings_beach_flat": (756400, 4347500), "kings_beach_slope": (756400, 4348100)}
-N = 300
+# (raster, window name, lower-left x, y in the raster's own CRS, window size in m)
+CASES = [
+    ("2022", SDE + r"\SDE.DEM_BareEarth_LiDAR_2022", "kings_beach_flat", 756400, 4347500, 300),
+    ("2010", SDE + r"\SDE.DEM_BareEarth_LiDAR_2010", "kings_beach_flat", 756400, 4347500, 300),
+    ("2022", SDE + r"\SDE.DEM_BareEarth_LiDAR_2022", "kings_beach_slope", 756400, 4348100, 300),
+    ("2010", SDE + r"\SDE.DEM_BareEarth_LiDAR_2010", "kings_beach_slope", 756400, 4348100, 300),
+    ("green", SDE + r"\SDE.Nearshore_BareEarth_DEM", "kings_beach_nearshore", 756400, 4346600, 300),
+    # Sonar is UTM 11N; deep flat basin floor near the lake centre, and the north shelf
+    ("sonar", SDE + r"\SDE.DEM_USGS_DeepWaterBathyTopo", "deep_basin_floor", 233000, 4326000, 3000),
+    ("sonar", SDE + r"\SDE.DEM_USGS_DeepWaterBathyTopo", "north_shelf", 231000, 4345000, 3000),
+]
 
 
-def analyze(name, path, x, y):
+def analyze(name, path, x, y, size_m):
     r = arcpy.Raster(path)
     cw = r.meanCellWidth
-    ncols = int(N / cw)
+    ncols = int(size_m / cw)
     a = arcpy.RasterToNumPyArray(r, arcpy.Point(x, y), ncols, ncols, nodata_to_value=np.nan).astype(float)
     v = a[np.isfinite(a)]
     if v.size == 0:
@@ -38,9 +45,8 @@ def analyze(name, path, x, y):
     print(f"  median |dz| between neighbors: {np.nanmedian(np.abs(a[:, 1:] - a[:, :-1])):.4f} m")
 
 
-for wname, (x, y) in windows.items():
-    for rname, path in rasters.items():
-        try:
-            analyze(f"{rname} {wname}", path, x, y)
-        except Exception as e:
-            print(f"{rname} {wname}: ERROR {str(e)[:200]}")
+for rname, path, wname, x, y, size in CASES:
+    try:
+        analyze(f"{rname} {wname}", path, x, y, size)
+    except Exception as e:
+        print(f"{rname} {wname}: ERROR {str(e)[:200]}")

@@ -85,14 +85,62 @@ sources:
     label: 2022 terrestrial LiDAR
     type: terrestrial
     year: 2022
-    native_cell_m: 0.7      # SDE copy is 0.728 x 0.676 m (non-square): a projected resample of the vendor grid
-    h_datum: NAD83 UTM 10N (EPSG 26910)   # from file; realization (2011?) not recorded
-    v_datum: TODO           # not in file. Likely NAVD88 GEOID18; confirm from vendor report
+    # SDE copy is 0.728 x 0.676 m (non-square): a resample of the USGS OPR bare-earth
+    # tiles (USGS_OPR_CA_SierraNevada_B22_be_*, 0.5 m, NAD83(2011) UTM 11N, NAVD88)
+    # into UTM 10N. That resample left a row/column moire that hillshades as
+    # terracing; the fix is to re-mosaic the tiles in their native zone 11 and let
+    # this pipeline do the single bilinear projection to 1 m.
+    native_cell_m: 0.5      # vendor tiles; the SDE copy is a 0.728 x 0.676 m resample
+    h_datum: NAD83 UTM 10N (EPSG 26910)   # SDE copy; vendor tiles are NAD83(2011) UTM 11N
+    v_datum: NAVD88         # from the OPR tile vertical CRS; geoid model per USGS project report (GEOID18 expected)
     z_units: m              # from value range (1,888 to 3,317)
     vertical_offset_m: 0.0  # reference: defines the output vertical datum
-    hydro_flattened: false  # water surface is noisy interpolation between sparse returns
+    hydro_flattened: false  # SDE copy has NoData over open water
     water_strip_tol_m: 0.5
     id: 1
+
+  # --- Planned replacement for lidar_2022 (2026-09-08), not yet active ---------
+  # The USGS OPR bare-earth tiles that cover the AOI are listed in
+  # data/usgs_2022_tiles_in_aoi*.txt (1,460 tiles: 870 TahoeWest + 33 unit 6 in
+  # UTM 10N, 557 TahoeEast in UTM 11N). Rather than pre-merge across zones, feed
+  # the two zones as two sources so each is resampled exactly once, by this
+  # pipeline: west is a clean 2:1 downsample in its own zone, east is one
+  # bilinear (or cubic) projection. Build one mosaic dataset per zone on the
+  # server (file gdb, not SDE), point the paths here, delete the lidar_2022 block
+  # above, and put lidar_2022_west first in both priority lists. The offset
+  # solver then also reports east vs west on land, which should be ~0.
+  #
+  # lidar_2022_west:
+  #   path: C:/GIS/lidar2022.gdb/opr_2022_utm10        # mosaic dataset of zone-10 tiles
+  #   label: 2022 terrestrial LiDAR (USGS OPR, zone 10)
+  #   type: terrestrial
+  #   year: 2022
+  #   native_cell_m: 0.5
+  #   h_datum: NAD83(2011) UTM 10N (EPSG 6339)
+  #   v_datum: NAVD88
+  #   z_units: m
+  #   vertical_offset_m: 0.0      # reference
+  #   hydro_flattened: true       # USGS spec flattens large water bodies; strip handles it either way
+  #   water_strip_tol_m: 0.15
+  #   resampling: BILINEAR
+  #   id: 1
+  # lidar_2022_east:
+  #   path: C:/GIS/lidar2022.gdb/opr_2022_utm11        # mosaic dataset of zone-11 tiles
+  #   label: 2022 terrestrial LiDAR (USGS OPR, zone 11)
+  #   type: terrestrial
+  #   year: 2022
+  #   native_cell_m: 0.5
+  #   h_datum: NAD83(2011) UTM 11N (EPSG 6340)
+  #   v_datum: NAVD88
+  #   z_units: m
+  #   vertical_offset_m: auto
+  #   hydro_flattened: true
+  #   water_strip_tol_m: 0.15
+  #   resampling: CUBIC           # rotated into zone 10; cubic suppresses moire better than bilinear
+  #   id: 5
+  # priority.land:  [lidar_2022_west, lidar_2022_east, lidar_2010, green_2020, sonar_1999]
+  # priority.water: [green_2020, lidar_2022_west, lidar_2022_east, lidar_2010, sonar_1999]
+  # qa.offset_chain: add [lidar_2022_east, lidar_2022_west] first; reference: lidar_2022_west
 
   lidar_2010:
     path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_BareEarth_LiDAR_2010
@@ -217,7 +265,7 @@ metadata:
   publish_date: "2026-09-08"
   # Vertical datum statement for the product. It is the 2022 lidar's datum; fill in
   # from the vendor report (likely NAVD88, GEOID18).
-  vertical_datum: TODO
+  vertical_datum: NAVD88 (inherited from the 2022 USGS OPR bare-earth tiles; geoid model per USGS CA_SierraNevada_B22 project report)
   credits: >
     Tahoe Regional Planning Agency. Source data: 2022 and 2010 terrestrial lidar bare-earth
     DEMs, 2020 topobathymetric lidar nearshore DEM, and U.S. Geological Survey Lake Tahoe
