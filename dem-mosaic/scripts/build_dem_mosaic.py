@@ -371,12 +371,15 @@ class Pipeline:
         out = self.path(f"{key}_std")
         z.save(out)
         arcpy.management.Delete(proj)
-        all_nodata = str(arcpy.management.GetRasterProperties(out, "ALLNODATA").getOutput(0)) == "1"
-        if all_nodata:
-            log.warning("%s: %s is entirely NoData in this extent; the source served no data here", key,
-                        self.n(f"{key}_std"))
-        else:
-            log.info("%s: saved %s", key, self.n(f"{key}_std"))
+        log.info("%s: saved %s", key, self.n(f"{key}_std"))
+        # Advisory only: an all-NoData result means the source served nothing in this extent.
+        # GetRasterProperties can fail outright on basin-sized rasters, so never let it abort.
+        try:
+            if str(arcpy.management.GetRasterProperties(out, "ALLNODATA").getOutput(0)) == "1":
+                log.warning("%s: %s is entirely NoData in this extent; the source served no data here",
+                            key, self.n(f"{key}_std"))
+        except Exception as e:  # noqa: BLE001
+            log.debug("%s: ALLNODATA check skipped (%s)", key, str(e).splitlines()[0][:120])
         return out
 
     @timed
