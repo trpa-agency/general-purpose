@@ -79,68 +79,43 @@ boundaries:
 # detected water surface + this tolerance are nulled. Tight for a hydro-flattened
 # product, wider for an un-flattened one where the surface is noisy.
 # ---------------------------------------------------------------------------
+# The 2022 lidar enters as two sources, one per UTM zone of the USGS OPR tiles
+# (USGS_OPR_CA_SierraNevada_B22_be_*, 0.5 m, NAD83(2011), NAVD88). The previous
+# single SDE raster was a 0.728 x 0.676 m cross-zone resample whose row/column
+# moire hillshaded as terracing. Feeding the zones separately means each is
+# resampled exactly once, here: west is a clean downsample in its own zone, east
+# is one cubic projection. Build the two mosaic datasets with
+# scripts/build_2022_source.py, which prints these paths.
 sources:
-  lidar_2022:
-    path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_BareEarth_LiDAR_2022
-    label: 2022 terrestrial LiDAR
+  lidar_2022_west:
+    path: C:/GIS/lidar2022.gdb/opr_2022_utm10        # mosaic dataset of zone-10 tiles
+    label: 2022 terrestrial LiDAR (USGS OPR, zone 10)
     type: terrestrial
     year: 2022
-    # SDE copy is 0.728 x 0.676 m (non-square): a resample of the USGS OPR bare-earth
-    # tiles (USGS_OPR_CA_SierraNevada_B22_be_*, 0.5 m, NAD83(2011) UTM 11N, NAVD88)
-    # into UTM 10N. That resample left a row/column moire that hillshades as
-    # terracing; the fix is to re-mosaic the tiles in their native zone 11 and let
-    # this pipeline do the single bilinear projection to 1 m.
-    native_cell_m: 0.5      # vendor tiles; the SDE copy is a 0.728 x 0.676 m resample
-    h_datum: NAD83 UTM 10N (EPSG 26910)   # SDE copy; vendor tiles are NAD83(2011) UTM 11N
-    v_datum: NAVD88         # from the OPR tile vertical CRS; geoid model per USGS project report (GEOID18 expected)
-    z_units: m              # from value range (1,888 to 3,317)
+    native_cell_m: 0.5
+    h_datum: NAD83(2011) UTM 10N (EPSG 6339)
+    v_datum: NAVD88         # from the OPR tile vertical CRS; geoid model per USGS project report
+    z_units: m
     vertical_offset_m: 0.0  # reference: defines the output vertical datum
-    hydro_flattened: false  # SDE copy has NoData over open water
-    water_strip_tol_m: 0.5
+    hydro_flattened: true   # USGS spec flattens large water bodies; the strip handles either case
+    water_strip_tol_m: 0.15
+    resampling: BILINEAR
     id: 1
 
-  # --- Planned replacement for lidar_2022 (2026-09-08), not yet active ---------
-  # The USGS OPR bare-earth tiles that cover the AOI are listed in
-  # data/usgs_2022_tiles_in_aoi*.txt (1,460 tiles: 870 TahoeWest + 33 unit 6 in
-  # UTM 10N, 557 TahoeEast in UTM 11N). Rather than pre-merge across zones, feed
-  # the two zones as two sources so each is resampled exactly once, by this
-  # pipeline: west is a clean 2:1 downsample in its own zone, east is one
-  # bilinear (or cubic) projection. Build one mosaic dataset per zone on the
-  # server (file gdb, not SDE), point the paths here, delete the lidar_2022 block
-  # above, and put lidar_2022_west first in both priority lists. The offset
-  # solver then also reports east vs west on land, which should be ~0.
-  #
-  # lidar_2022_west:
-  #   path: C:/GIS/lidar2022.gdb/opr_2022_utm10        # mosaic dataset of zone-10 tiles
-  #   label: 2022 terrestrial LiDAR (USGS OPR, zone 10)
-  #   type: terrestrial
-  #   year: 2022
-  #   native_cell_m: 0.5
-  #   h_datum: NAD83(2011) UTM 10N (EPSG 6339)
-  #   v_datum: NAVD88
-  #   z_units: m
-  #   vertical_offset_m: 0.0      # reference
-  #   hydro_flattened: true       # USGS spec flattens large water bodies; strip handles it either way
-  #   water_strip_tol_m: 0.15
-  #   resampling: BILINEAR
-  #   id: 1
-  # lidar_2022_east:
-  #   path: C:/GIS/lidar2022.gdb/opr_2022_utm11        # mosaic dataset of zone-11 tiles
-  #   label: 2022 terrestrial LiDAR (USGS OPR, zone 11)
-  #   type: terrestrial
-  #   year: 2022
-  #   native_cell_m: 0.5
-  #   h_datum: NAD83(2011) UTM 11N (EPSG 6340)
-  #   v_datum: NAVD88
-  #   z_units: m
-  #   vertical_offset_m: auto
-  #   hydro_flattened: true
-  #   water_strip_tol_m: 0.15
-  #   resampling: CUBIC           # rotated into zone 10; cubic suppresses moire better than bilinear
-  #   id: 5
-  # priority.land:  [lidar_2022_west, lidar_2022_east, lidar_2010, green_2020, sonar_1999]
-  # priority.water: [green_2020, lidar_2022_west, lidar_2022_east, lidar_2010, sonar_1999]
-  # qa.offset_chain: add [lidar_2022_east, lidar_2022_west] first; reference: lidar_2022_west
+  lidar_2022_east:
+    path: C:/GIS/lidar2022.gdb/opr_2022_utm11        # mosaic dataset of zone-11 tiles
+    label: 2022 terrestrial LiDAR (USGS OPR, zone 11)
+    type: terrestrial
+    year: 2022
+    native_cell_m: 0.5
+    h_datum: NAD83(2011) UTM 11N (EPSG 6340)
+    v_datum: NAVD88
+    z_units: m
+    vertical_offset_m: auto
+    hydro_flattened: true
+    water_strip_tol_m: 0.15
+    resampling: CUBIC       # rotated into zone 10; cubic suppresses moire better than bilinear
+    id: 5
 
   lidar_2010:
     path: F:/GIS/DB_CONNECT/Raster.sde/SDE.DEM_BareEarth_LiDAR_2010
@@ -204,8 +179,8 @@ sources:
 # acquisition-date waterline; the water-surface strip handles the rest.
 # ---------------------------------------------------------------------------
 priority:
-  land:  [lidar_2022, lidar_2010, green_2020, sonar_1999]
-  water: [green_2020, lidar_2022, lidar_2010, sonar_1999]
+  land:  [lidar_2022_west, lidar_2022_east, lidar_2010, green_2020, sonar_1999]
+  water: [green_2020, lidar_2022_west, lidar_2022_east, lidar_2010, sonar_1999]
 
 # Seam feathering. Blends the winning source into the runner-up over this
 # distance (m) from the winner's data edge. 0 = hard cutlines.
@@ -239,11 +214,14 @@ blend:
 # A third element "diagnostic" reports a pair without using it to set an offset.
 # ---------------------------------------------------------------------------
 qa:
-  reference: lidar_2022
+  reference: lidar_2022_west
   offset_chain:
-    - [lidar_2010, lidar_2022]
-    - [green_2020, lidar_2022]
-    - [sonar_1999, lidar_2022]
+    # East vs west is the same product in two zones; expect ~0. A large value means
+    # a projection or realization problem, not a datum difference.
+    - [lidar_2022_east, lidar_2022_west]
+    - [lidar_2010, lidar_2022_west]
+    - [green_2020, lidar_2022_west]
+    - [sonar_1999, lidar_2022_west]
     - [sonar_1999, green_2020, diagnostic]
   sample_points: 20000    # initial random points over each pair's overlap bounding box
   max_sample_points: 500000  # grown x5 at a time until min_samples are usable, up to this
@@ -272,7 +250,8 @@ metadata:
     multibeam bathymetry (Gardner and others, 2000).
   # One paragraph per source for the lineage section. Fill vendor, program, and dates.
   source_citations:
-    lidar_2022: "TODO: vendor, program (e.g. USGS 3DEP project name), acquisition dates, reported vertical accuracy."
+    lidar_2022_west: "U.S. Geological Survey 3DEP original product resolution (OPR) bare-earth DEM tiles, project CA_SierraNevada_B22, work units TahoeWest and ca_sierranevada_6, UTM zone 10N portion. 0.5 m, NAD83(2011), NAVD88. TODO: acquisition dates and reported vertical accuracy from the USGS project report."
+    lidar_2022_east: "U.S. Geological Survey 3DEP original product resolution (OPR) bare-earth DEM tiles, project CA_SierraNevada_B22, work unit TahoeEast, UTM zone 11N portion. 0.5 m, NAD83(2011), NAVD88. TODO: acquisition dates and reported vertical accuracy from the USGS project report."
     lidar_2010: "TODO: vendor, program, acquisition dates, reported vertical accuracy."
     green_2020: "TODO: vendor, program, acquisition dates, reported depth penetration and accuracy."
     sonar_1999: "U.S. Geological Survey multibeam bathymetric survey of Lake Tahoe (Gardner, Mayer, and Hughes Clarke, 2000), gridded at 10 m and merged by USGS with a topographic skin. TODO: confirm survey year and product citation."
