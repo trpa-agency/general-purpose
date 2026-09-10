@@ -86,7 +86,7 @@ boundaries:
 # single SDE raster was a 0.728 x 0.676 m cross-zone resample whose row/column
 # moire hillshaded as terracing. Feeding the zones separately means each is
 # resampled exactly once, here: west is a clean downsample in its own zone, east
-# is one cubic projection. Build the two mosaic datasets with
+# is one bilinear projection. Build the two mosaic datasets with
 # scripts/build_2022_source.py, which prints these paths.
 sources:
   lidar_2022_west:
@@ -113,7 +113,12 @@ sources:
     h_datum: NAD83(2011) UTM 11N (EPSG 6340)
     v_datum: NAVD88
     z_units: m
-    vertical_offset_m: auto
+    # 0.0 by construction: same product, same NAVD88 datum, same vendor processing as the west
+    # half, and ProjectRaster does not touch elevations. The overlap strip between the two
+    # zones' tiles is only metres wide, so measuring it is unreliable in a test box; the
+    # east-vs-west pair stays in the offset chain as a diagnostic and the basin run reports
+    # the measured difference along the whole seam. Set a number here only if that says so.
+    vertical_offset_m: 0.0
     hydro_flattened: true
     water_strip_tol_m: 0.15
     # Bilinear, same as the west half. This half rotates ~4 degrees into zone 10 (Tahoe sits 3
@@ -228,7 +233,7 @@ qa:
   offset_chain:
     # East vs west is the same product in two zones; expect ~0. A large value means
     # a projection or realization problem, not a datum difference.
-    - [lidar_2022_east, lidar_2022_west]
+    - [lidar_2022_east, lidar_2022_west, diagnostic]   # same product in two zones; offset fixed at 0
     - [lidar_2010, lidar_2022_west]
     - [green_2020, lidar_2022_west]
     - [sonar_1999, lidar_2022_west]
