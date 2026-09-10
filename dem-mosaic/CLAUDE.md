@@ -37,6 +37,26 @@ grows ~2.9 m per 10 m of depth basin-wide, flat at Kings Beach). The green-to-so
 near 13 m depth is a 2-3 m step in places, ramped over 300 m. Proper fix needs the original
 multibeam coverage polygon so the sonar can be restricted to surveyed cells.
 
+## 2022 source rebuild (2026-09-09)
+
+The first basin build used `SDE.DEM_BareEarth_LiDAR_2022`, a cross-zone resample at
+0.728 x 0.676 m whose row/column moire hillshades as terracing. Replaced by the USGS OPR
+tiles it came from, fed as two sources so each is resampled exactly once by this pipeline.
+
+- Tiles live on the server at `\\vcenter2\GIS_DATA\LiDAR\2022\DEM\DEM_downloads`
+  (16,762 tiles; 1,460 cover the basin, all present, none missing).
+- Project CA_SierraNevada_B22: 903 tiles in NAD83(2011) UTM 10N (work units TahoeWest and
+  ca_sierranevada_6, named `_bh_`), 557 in UTM 11N (TahoeEast, no `_bh_` infix).
+- Both zones verified bare earth against the 2010 DEM: median difference -0.14 to +0.12 m,
+  p90 under 0.61 m, essentially no points over 3 m. The naming difference means nothing.
+- Both zones hydro-flattened at exactly 1897.89 m over the lake, within 5 cm of the water
+  surface the 2010 lidar shows. Step 5 strips it.
+- Tiles ship without raster statistics, so `Raster.minimum` is None; read pixels instead.
+- `scripts/build_2022_source.py` inventories the tiles and builds one mosaic dataset per zone
+  in `C:\GIS\lidar2022.gdb`, referencing tiles in place. It sets each mosaic dataset's
+  `resampling_type` from the config, because a new mosaic dataset defaults to NEAREST and that
+  is the artifact this rebuild exists to remove.
+
 ## Design decisions (do not silently undo)
 
 - Vertical datums are reconciled empirically in step 3: 2022 lidar is the reference, other
