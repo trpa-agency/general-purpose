@@ -33,10 +33,12 @@ target:
   # Output extent = boundary polygon (below) unioned with lake polygon, plus buffer.
   extent_buffer_m: 100
   # Test box [xmin, ymin, xmax, ymax] in target CRS meters, used by --test.
-  # 4 x 4 km at Kings Beach: ~1 km of flat land north of the shore for the land
-  # offset pairs, and a gradual shelf reaching the 5-13 m band where sonar and
-  # green lidar overlap. Change to any shoreline box; all four sources cover it.
-  test_extent: [754500, 4344500, 758500, 4348500]
+  # 4 x 4 km at Stateline on the south shore, straddling the 120th meridian
+  # (easting ~760,000) so both 2022 halves, their seam, the 2010 lidar, the
+  # green lidar, and the sonar all have data in the box. Flat urban land south of
+  # ~4,314,500 for the land offset pairs, lake to the north.
+  # Earlier box (Kings Beach, zone 10 only): [754500, 4344500, 758500, 4348500]
+  test_extent: [758500, 4312000, 762500, 4316000]
   pixel_type: 32_BIT_FLOAT
   compression: LZW
   # Sanity range (m). Lake bottom ~1,397 m, Freel Peak 3,317 m. Anything outside is

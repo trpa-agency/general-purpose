@@ -233,7 +233,19 @@ class Pipeline:
         log.info("extent %.0f %.0f %.0f %.0f; %.2e cells per raster (%.1f GB float32 uncompressed)",
                  ext.XMin, ext.YMin, ext.XMax, ext.YMax, n_cells, n_cells * 4 / 1e9)
         self._ext = ext
+        self._prune_active_to_extent(ext)
         return ext
+
+    def _prune_active_to_extent(self, ext):
+        """Drop sources with no footprint in the run extent (e.g. the zone-11 lidar in a west-shore
+        test box) so every step treats them as absent instead of failing on empty rasters."""
+        for key in list(self.active):
+            src_ext = arcpy.Raster(self.active[key]["path"]).extent.projectAs(self.target_sr)
+            if src_ext.disjoint(ext):
+                log.warning("%s: no overlap with the run extent; treated as inactive for this run", key)
+                del self.active[key]
+        if self.snap_key not in self.active:
+            raise SystemExit(f"snap source {self.snap_key} has no data in the run extent; move test_extent")
 
     @property
     def snap(self):
