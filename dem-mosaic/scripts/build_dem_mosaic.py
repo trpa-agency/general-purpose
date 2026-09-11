@@ -202,6 +202,12 @@ class Pipeline:
                 log.info("dropped %s", self.n(name))
             except arcpy.ExecuteError as e:
                 log.warning("could not drop %s: %s", self.n(name), str(e).splitlines()[0][:120])
+        # The environment may still point at a raster just deleted; every later raster-algebra
+        # call would fail with 010340. Re-resolve the snap along the fallback chain.
+        cur = arcpy.env.snapRaster
+        if cur and not arcpy.Exists(str(cur)):
+            arcpy.env.snapRaster = self.snap
+            log.info("snap raster now %s", arcpy.env.snapRaster)
 
     def purge(self, prefix):
         """Delete every scratch item whose name starts with prefix, then compact the gdb."""
@@ -624,10 +630,16 @@ class Pipeline:
                                 "output vertical datum is that of the reference", offsets=resolved)),
             encoding="utf-8")
         log.info("resolved offsets (m, relative to %s): %s -> %s", ref, resolved, self.resolved_offsets_file())
-        unsolved = [k for k in self.active if k not in offsets]
+        def wants_auto(k):
+            v = self.src[k].get("vertical_offset_m", "auto")
+            return isinstance(v, str) and v.lower() == "auto"
+        unsolved = [k for k in self.active if k not in offsets and wants_auto(k)]
         if unsolved:
-            log.error("no offset solved for %s; step 5 will refuse them unless vertical_offset_m is set manually",
+            log.error("no offset solved for %s and vertical_offset_m is auto; step 5 will refuse them",
                       unsolved)
+        fixed = [k for k in self.active if k not in offsets and not wants_auto(k)]
+        if fixed:
+            log.info("%s use the fixed vertical_offset_m from config", fixed)
         # Cleanup: sample points and the reference slope are spent. Difference rasters are only
         # for viewing a TILT in Pro; keep them with qa.keep_diff_rasters: true.
         self.drop(f"ref_slope_{ref}", *[f"qa_{e[0]}_{e[1]}" for e in qa["offset_chain"]])
@@ -737,11 +749,13 @@ class Pipeline:
         log.info("vertical offsets applied (m): %s", offsets)
         infos = []
         for key, s in self.active.items():
-            if not self.exists(f"{key}_std"):
-                raise SystemExit(f"{key}: standardized raster missing; run step 2")
+            # Resume-safe order: a finished clean raster is enough even if its std was dropped.
             if not self.stale(f"{key}_clean"):
                 log.info("%s: %s exists, skipping", key, self.clean_name(key))
                 continue
+            if not self.exists(f"{key}_std"):
+                raise SystemExit(f"{key}: standardized raster missing; run step 2 for it "
+                                 f"(--steps 2 without --force only rebuilds missing sources)")
             infos.append(self._clean_one(key, s, offsets[key]))
             # The clean raster now carries everything downstream needs; the std raster (and the
             # water-surface sample points) are spent. Re-solving offsets later means rerunning step 2.
