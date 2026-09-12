@@ -1,0 +1,47 @@
+# TRPA data pipeline — standard .gitignore
+
+# Secrets
+.env
+.env.local
+*.secret
+
+# Data: never commit. Match contents, not the directory, so the .gitkeep
+# negations below can take effect (git cannot re-include a file inside an
+# excluded directory). outputs/ is excluded at the repo root, so its .gitkeep
+# stays untracked; src/io.py creates the folder on first run.
+data/raw/*
+data/processed/*
+outputs/*
+logs/*
+
+# Keep the empty directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!outputs/.gitkeep
+!logs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ArcGIS / spatial temp files
+*.lock
+*.sr.lock
+*.gdb/
+scratch.gdb/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp

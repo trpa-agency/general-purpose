@@ -1,0 +1,77 @@
+project:
+  name: lidar-2022
+  owner: mbindl@trpa.gov
+  description: 2022 Basin LiDAR base processing (LAZ to DTM, CHM, normalized LAZ, 30 m metrics, TAOs); consumed by ForestHealth/plot-network-design
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  outputs: outputs
+  logs: logs
+
+crs:
+  working: "EPSG:26910"        # NAD83 UTM 10N; all layers reprojected here
+  lidar_grid_m: 30             # analysis grid; match Shengli's model grid
+
+# Sources may be local files under data/raw OR TRPA ArcGIS REST URLs.
+# Feature layers:  https://maps.trpa.gov/server/rest/services/<Service>/FeatureServer/<n>
+# Image services:  https://maps.trpa.gov/server/rest/services/<Image>/ImageServer
+# src/layers.py reads either transparently. Replace the placeholders below with the service URLs.
+lidar:
+  # 00a_las_to_chm: raw 2022 LAS/LAZ tiles -> DTM, 1 m CHM tiles, and point-based 30 m metrics.
+  las_dir: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\LAZ"   # ~2 TB LAZ archive on the network share; walked recursively (synthetic run ignores this)
+  las_glob: "*.la[sz]"
+  aoi: "data/raw/cwhr_veg.gpkg"                     # boundary file/URL; tiles whose header bounds miss it are skipped (use the Basin boundary or CWHR layer; REST URL ok)
+  local_scratch: "C:\\lidar_scratch"                # local disk on the 32 GB server; one tile per worker staged here, deleted after
+  workers: 3                                        # 32 GB server: 3 workers x ~4 GB peak each leaves headroom; raise to 4 only if RAM stays under 20 GB
+  in_memory_max_points: 40000000                    # 40 M points ~ 2.5-3 GB per worker; larger tiles use the chunked two-pass path
+  partials_dir: "data/processed/point_metrics_tiles"  # one .npz per tile; delete a tile's .npz to reprocess it
+  publish_dir: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\Derived"   # final products copied here at the end: 30 m metric rasters, CHM tiles + VRT, tile index
+  normalized_dir: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\LAZ_Basin_HAG"   # optional: AOI-filtered, height-normalized LAZ written once per tile (null to skip). ~1 TB free on the drive makes this worthwhile
+  normalized_write_extra_dim: true                  # in-memory path: keep z, add HeightAboveGround extra dim; chunked path always writes z = HAG
+  classification_sample_tiles: 25                   # random tiles to sample for ground/unclassified share in the pre-flight
+  engine: "laspy"                                   # "laspy" (pure Python) or "arcpy" (LAS dataset tools)
+  ground_class: 2
+  dtm_res_m: 1                                      # DTM cell size for height normalization
+  chm_tiles_dir: "data/processed/chm_1m_tiles"      # written by 00a; read by 00_lidar
+  dtm_tiles_dir: "data/processed/dtm_1m_tiles"      # bare earth at dtm_res_m, one tile per LAZ tile; published with a VRT
+  point_metrics_use_first_returns_for_cover: true   # cover = first returns > 2 m / all first returns
+  max_hag_m: 80                                     # drop returns above this (birds, noise)
+  min_ground_points_per_tile: 1000
+  # 00_lidar: CHM (single GeoTIFF, folder of tiles, or ImageServer URL) -> 30 m strata rasters
+  chm_source: "data/processed/chm_1m_tiles"         # default = 00a output; or a CHM file / ImageServer URL
+  laz_dir: null                                     # 00_lidar point-cloud metric; leave null when 00a already wrote lidar2022_midcanopy_30m.tif
+  grid_origin: [730000, 4290000]                     # snap the 30 m grid here; set to Shengli's raster origin
+  canopy_height_threshold_m: 2.0                     # cover = fraction of CHM cells above this
+  cover_secondary_threshold_m: 5.0                   # second cover layer (Becky's 2 m and 5 m breaks)
+  height_percentile: 95
+  mid_canopy_band_m: [2.0, 8.0]                      # ladder-fuel proxy from point cloud returns
+  itd:
+    smooth_sigma_m: 1.0                              # gaussian smoothing of CHM before local maxima
+    min_tree_height_m: 3.0
+    window_m_by_height: {5: 3, 15: 5, 25: 7, 999: 9}  # local-max window (m) for CHM height up to key
+  tile_px: 3000                                      # processing block size in CHM pixels
+  nodata: -9999
+
+taos:
+  # 00b_taos: tree approximate objects from the 1 m CHM tiles (first pass); lidR on LAZ_Basin_HAG is the second pass
+  chm_tiles_dir: "data/processed/chm_1m_tiles"      # or Derived\chm_1m_tiles on the share
+  out_dir: "data/processed/taos"                     # per-tile <tile>_trees.parquet and <tile>_crowns.gpkg
+  publish_dir: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\Derived\\taos"
+  smooth_sigma_m: 1.0
+  min_tree_height_m: 3.0
+  window_m_by_height: {5: 3, 15: 5, 25: 7, 999: 9}   # same rule as 00_lidar ITD so the two agree
+  crown_floor_frac: 0.5                              # crown pixels must be at least this fraction of top height
+  min_crown_area_m2: 2.0
+  pad_px: 25                                         # read this much of neighbouring tiles (via VRT) so edge crowns are whole
+  write_polygons: true                               # false = points only (much faster, much smaller)
+  workers: 3
+  density_min_height_m: 3.0
+
+run:
+  synthetic: true        # true = four small fake tiles so the chain runs in seconds; false = the 2022 archive
+
+# Preview only: 00_lidar's sanity cell shows how p95 splits under these breaks. The authoritative
+# values live in ForestHealth/plot-network-design/config.yaml (strata.height_breaks_m); keep them in step.
+strata:
+  height_breaks_m: {JP: [8, 22], SMC: [10, 26], RF: [10, 26]}
