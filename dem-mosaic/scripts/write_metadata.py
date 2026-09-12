@@ -98,8 +98,8 @@ def abstract(cfg, run, kind):
 
     core = (
         f"Bare-earth digital elevation model of the Lake Tahoe Basin, {t['cell_size_m']:g} m cell size, "
-        f"covering the TRPA jurisdictional boundary and the full lake bottom. Built by mosaicking four "
-        f"elevation sources with a per-zone priority order in which the first source with valid data at "
+        f"covering the TRPA jurisdictional boundary and the full lake bottom. Built by mosaicking "
+        f"{len(srcs)} elevation sources with a per-zone priority order in which the first source with valid data at "
         f"a cell wins: on land {order_land}; within the lake high-water polygon {order_water}. "
         f"{offsets_sentence(cfg, run)} Hydro-flattened water surfaces were removed from terrestrial lidar "
         f"inside the lake polygon so that the topobathymetric lidar and sonar supply the lake bottom. "
@@ -141,7 +141,9 @@ def lineage_statement(cfg, run):
     lines = [
         "The mosaic was produced with dem-mosaic/scripts/build_dem_mosaic.py (TRPA general-purpose "
         "repository), an eight-step, resumable arcpy pipeline. Every parameter is recorded in the "
-        "accompanying config.yaml. Sources were read from the TRPA enterprise geodatabase.",
+        "accompanying config.yaml. The 2022 lidar was read from USGS OPR bare-earth tiles through one "
+        "mosaic dataset per UTM zone; the 2010 lidar, 2018 topobathymetric lidar, and USGS bathymetry "
+        "were read from the TRPA enterprise geodatabase.",
     ]
     if q is not None:
         rows = []
@@ -162,10 +164,11 @@ def lineage_statement(cfg, run):
                          f"all other cells median {bg['50%']:.2f} m, 99th percentile {bg['99%']:.2f} m.")
         except (IndexError, KeyError):
             pass
-    lines.append("Known limitation: the 1999 bathymetric grid is interpolated rather than surveyed in most "
-                 "water shallower than about 13 m. Where the 2020 topobathymetric lidar ends, the mosaic "
-                 "ramps into that interpolated surface over 300 m; differences of 2 to 3 m between the two "
-                 "were measured basin-wide at the handoff depth.")
+    lines.append("Known limitation: shallower than about 13 m the 1999 USGS bathymetric grid disagrees with "
+                 "the 2018 topobathymetric lidar by an amount that grows with depth, about 3 m per 10 m "
+                 "basin-wide; the product does not document whether that band is interpolated or older "
+                 "lidar. Where the 2018 lidar ends, the mosaic ramps into the USGS grid over 300 m, and "
+                 "differences of 2 to 3 m between the two were measured at the handoff depth.")
     return " ".join(lines)
 
 
