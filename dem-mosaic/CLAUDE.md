@@ -52,10 +52,29 @@ tiles it came from, fed as two sources so each is resampled exactly once by this
 - Both zones hydro-flattened at exactly 1897.89 m over the lake, within 5 cm of the water
   surface the 2010 lidar shows. Step 5 strips it.
 - Tiles ship without raster statistics, so `Raster.minimum` is None; read pixels instead.
+- The two work units are clipped at the 120th meridian with no overlap (394 usable points in
+  500,000 for the east-vs-west check). Bilinear resampling loses ~half a cell per data edge, so
+  a 1-2 cell strip along the meridian had no 2022 data. `edge_fill_cells: 2` on both halves
+  fills NoData within two cells of data from the mean of valid neighbours, before the water strip.
 - `scripts/build_2022_source.py` inventories the tiles and builds one mosaic dataset per zone
   in `C:\GIS\lidar2022.gdb`, referencing tiles in place. It sets each mosaic dataset's
   `resampling_type` from the config, because a new mosaic dataset defaults to NEAREST and that
   is the artifact this rebuild exists to remove.
+
+## Incident 2026-09-11: mosaic dropped before export
+
+The first basin run with the OPR sources (steps 5-8 resumed without --force) built the new
+mosaic in scratch, but step 7 skipped the export because COGs from the 2026-09-08 build
+already existed, and step 8 then dropped the scratch mosaic because "COGs exist". Nine hours
+lost; the products on disk stayed the old ones. Fixes: run markers (`<prefix>mosaic_built.txt`,
+`<prefix>mosaic_exported.txt` in the outputs folder) decide whether COGs came from the mosaic
+in scratch; step 7 exports whenever they did not; step 8 and finalize refuse to drop an
+unexported mosaic. Existence of a COG alone must never justify a drop.
+
+Same run showed step 6 at 9.2 h with five sources against 3.2 h with four: the feather chain
+referenced the accumulated raster three times per level and the lazy expression tripled per
+source. Each level is now materialized to scratch (`dm_acc_<zone>_<level>`) and dropped after
+the mosaic saves.
 
 ## Scratch hygiene (2026-09-10)
 

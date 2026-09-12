@@ -708,9 +708,24 @@ class Pipeline:
                  key, med, mad, len(z), n_pts)
         return med, mad, len(z)
 
+    def fill_edges(self, z, cells, label=""):
+        """Grow data outward by `cells` cells into NoData, each filled cell taking the mean of the
+        valid cells in its (2*cells+1)-square neighbourhood. Closes the one-to-two-cell strip that
+        bilinear resampling leaves along tile-set edges (the zone seam is clipped at the meridian
+        with no overlap, and each half loses about half a cell there). Also fills isolated voids
+        of that size, which a vendor bare-earth DEM should not contain anyway. One raster pass."""
+        cells = int(cells or 0)
+        if cells <= 0:
+            return z
+        w = 2 * cells + 1
+        log.info("%s: filling NoData within %d cell(s) of data with the %dx%d mean of valid neighbours",
+                 label, cells, w, w)
+        return Con(IsNull(z), FocalStatistics(z, NbrRectangle(w, w, "CELL"), "MEAN", "DATA"), z)
+
     def _clean_one(self, key, s, offset):
         z = arcpy.Raster(self.path(f"{key}_std"))
         info = dict(key=key, offset_m=offset)
+        z = self.fill_edges(z, s.get("edge_fill_cells", 0), key)
         if s["type"] == "terrestrial":
             # Water surface is detected on the un-shifted raster, then both shift together
             ws, mad, n = self.water_surface_elev(key)
@@ -777,7 +792,8 @@ class Pipeline:
         if not keys:
             raise SystemExit("no cleaned sources found; run step 5")
         val = sid = None
-        for key in reversed(keys):
+        acc = []   # materialized accumulators, dropped by the caller once the mosaic is saved
+        for level, key in enumerate(reversed(keys)):
             r = arcpy.Raster(self.path(f"{key}_clean"))
             i = int(self.src[key]["id"])
             if val is None:
@@ -786,11 +802,19 @@ class Pipeline:
             if feather > 0:
                 d = EucDistance(Con(IsNull(r), 1), feather)   # distance from r's edge, inside r
                 w = Con(IsNull(d), 1.0, d / feather)           # 0 at edge -> 1 at feather distance
-                val = Con(IsNull(r), val, Con(IsNull(val), r, w * r + (1 - w) * val))
+                blended = Con(IsNull(r), val, Con(IsNull(val), r, w * r + (1 - w) * val))
+                # `val` appears three times above. Left lazy, the expression tree triples per
+                # source and the whole chain is re-evaluated at save: 3 h for four sources,
+                # 9 h for five. Materialize each level so the cost is one pass per source.
+                name = f"acc_{zone_name}_{level}"
+                blended.save(self.path(name))
+                acc.append(name)
+                val = arcpy.Raster(self.path(name))
+                log.info("%s chain: level %d (%s) materialized", zone_name, level, key)
             else:
                 val = Con(IsNull(r), val, r)
             sid = Con(IsNull(r), sid, i)
-        return val, sid
+        return val, sid, acc
 
     @timed
     def step6_mosaic(self):
@@ -800,33 +824,66 @@ class Pipeline:
             log.info("mosaic exists, skipping")
             return
         zone = self.zone
-        land_val, land_sid = self._first_valid(self.cfg["priority"]["land"], "land")
-        water_val, water_sid = self._first_valid(self.cfg["priority"]["water"], "water")
+        land_val, land_sid, land_acc = self._first_valid(self.cfg["priority"]["land"], "land")
+        water_val, water_sid, water_acc = self._first_valid(self.cfg["priority"]["water"], "water")
         dem = Con(zone == 1, land_val, Con(zone == 2, water_val))
         sid = Con(zone == 1, land_sid, Con(zone == 2, water_sid))
         sid = SetNull(sid == 0, Int(sid))
         dem.save(self.path("dem_mosaic"))
         sid.save(self.path("dem_source"))
+        self.touch("mosaic_built")
         log.info("saved %s and %s", self.n("dem_mosaic"), self.n("dem_source"))
-        self.drop(*[f"{k}_clean" for k in self.active])   # consumed by the mosaic
+        self.drop(*land_acc, *water_acc, *[f"{k}_clean" for k in self.active])   # consumed by the mosaic
 
     # ---- step 7 --------------------------------------------------------------
+    # ---- run markers ----------------------------------------------------------
+    # Small files in the outputs folder recording when the scratch mosaic was built and when it
+    # was last exported. They decide, across resumed runs, whether the COGs on disk came from
+    # the mosaic currently in scratch. Existence of a COG alone proves nothing: it may be an
+    # earlier build, which is exactly how a nine-hour mosaic was dropped unexported once.
+    def marker(self, name):
+        return self.out_dir / f"{self.pfx}{name}.txt"
+
+    def touch(self, name):
+        self.marker(name).write_text(time.strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8")
+
+    def marker_time(self, name):
+        m = self.marker(name)
+        return m.stat().st_mtime if m.exists() else None
+
+    def cogs_current(self):
+        """True when every COG exists and was exported from the mosaic most recently built."""
+        built, exported = self.marker_time("mosaic_built"), self.marker_time("mosaic_exported")
+        files = [Path(self.out_file(k)) for k in ("dem", "source_id", "hillshade")]
+        if not all(f.exists() for f in files) or exported is None:
+            return False
+        return built is None or exported >= built
+
     @timed
     def step7_export(self):
-        """COG GeoTIFFs plus provenance lookup."""
-        for name in ("dem_mosaic", "dem_source"):
-            if not self.exists(name):
-                raise SystemExit(f"{self.n(name)} missing; run step 6")
+        """COG GeoTIFFs plus provenance lookup. Always exports when a scratch mosaic exists and the
+        COGs on disk are not already from it."""
+        have_scratch = self.exists("dem_mosaic") and self.exists("dem_source")
         dem_path, sid_path, hs_path = (self.out_file(k) for k in ("dem", "source_id", "hillshade"))
-        if self.force or not Path(dem_path).exists():
+        if not have_scratch:
+            if self.cogs_current():
+                log.info("scratch mosaic already dropped; %s is the current product", dem_path)
+                return None
+            raise SystemExit(f"{self.n('dem_mosaic')} missing and no current COGs; run step 6")
+        if self.cogs_current() and not self.force:
+            log.info("COGs already exported from this mosaic; skipping (--force to redo)")
+        else:
             arcpy.management.CopyRaster(self.path("dem_mosaic"), dem_path, nodata_value=self.nodata,
                                         pixel_type=self.cfg["target"]["pixel_type"], format="COG")
-        if self.force or not Path(sid_path).exists():
             arcpy.management.CopyRaster(self.path("dem_source"), sid_path, nodata_value=0,
                                         pixel_type="8_BIT_UNSIGNED", format="COG")
             arcpy.management.BuildRasterAttributeTable(sid_path, "Overwrite")
-        if self.force or not Path(hs_path).exists():
             Hillshade(self.path("dem_mosaic"), z_factor=1).save(hs_path)
+            for f in (dem_path, sid_path, hs_path):
+                if not arcpy.Exists(f):
+                    raise SystemExit(f"export of {f} did not produce a readable raster; scratch mosaic kept")
+            self.touch("mosaic_exported")
+            log.info("exported %s, %s, %s", dem_path, sid_path, hs_path)
         offsets = self.offsets()
         ref = self.cfg["qa"]["reference"]
         prov = pd.DataFrame([dict(id=s["id"], key=k, label=s["label"], year=s["year"], type=s["type"],
@@ -835,7 +892,6 @@ class Pipeline:
                                   output_v_datum=f"aligned to {ref} ({self.src[ref]['v_datum']})")
                              for k, s in self.src.items()])
         prov.to_csv(self.out_dir / f"source_id_lookup{'_test' if self.test else ''}.csv", index=False)
-        log.info("exported %s, %s, %s", dem_path, sid_path, hs_path)
         return prov
 
     # ---- step 8 --------------------------------------------------------------
@@ -884,10 +940,13 @@ class Pipeline:
         suffix = "_test" if self.test else ""
         area.to_csv(self.out_dir / f"area_by_source{suffix}.csv", index=False)
         seams.to_csv(self.out_dir / f"seam_stats{suffix}.csv")
-        # QA temporaries are spent. The mosaic itself is only dropped once its COG exists.
+        # QA temporaries are spent. The mosaic itself is dropped only when the COGs on disk are
+        # proven to have been exported from it (run markers), never on file existence alone.
         self.drop("dem_holes", "seam_mask", "dem_range3", "qa_seam_pts")
-        if Path(self.out_file("dem")).exists() and Path(self.out_file("source_id")).exists():
+        if self.cogs_current():
             self.drop("dem_mosaic", "dem_source")
+        elif self.exists("dem_mosaic"):
+            log.warning("scratch mosaic kept: COGs on disk are not from this build (run step 7)")
         return area, n_holes, seams
 
     # ---- driver ---------------------------------------------------------------
@@ -895,7 +954,10 @@ class Pipeline:
         for s in steps:
             getattr(self, f"step{s}_{STEPS[s]}")()
         if not self.keep and 8 in steps:
-            self.finalize()
+            if self.exists("dem_mosaic") and not self.cogs_current():
+                log.warning("finalize skipped: scratch mosaic is not exported yet")
+            else:
+                self.finalize()
 
     def finalize(self):
         """After step 8 only masks and polygons remain; they rebuild in seconds. Drop by name, never by

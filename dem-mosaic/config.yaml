@@ -102,6 +102,11 @@ sources:
     hydro_flattened: true   # USGS spec flattens large water bodies; the strip handles either case
     water_strip_tol_m: 0.15
     resampling: BILINEAR
+    # The two work units are clipped at the 120th meridian with no overlap, and bilinear
+    # resampling loses ~half a cell along every data edge, leaving a 1-2 cell strip that
+    # neither half covers. Fill NoData within this many cells of data from the mean of valid
+    # neighbours, before the water strip. 0 disables.
+    edge_fill_cells: 2
     id: 1
 
   lidar_2022_east:
@@ -130,6 +135,7 @@ sources:
     # land at the north and south shores. If the east half looks aliased in the test-box
     # hillshade, set CUBIC here and rerun step 2 for this source only.
     resampling: BILINEAR
+    edge_fill_cells: 2      # see lidar_2022_west
     id: 5
 
   lidar_2010:
