@@ -432,7 +432,19 @@ class Pipeline:
         log.info("%s: %s -> %s via %s (candidates %s)", key, in_sr.name, self.target_sr.name,
                  geo_tf, transforms[:3])
 
-        proj = self.path(f"{key}_proj")
+        # Transient projection output. An interrupted write can leave a raster half-registered in
+        # the gdb catalog: arcpy.Exists says no, but ProjectRaster fails with "The table already
+        # exists". So sweep any stale transient for this source, and use a name unique to this
+        # attempt so a stale entry that cannot be deleted never blocks the run.
+        arcpy.env.workspace = self.scratch
+        for stale in (arcpy.ListRasters(f"{self.n(key)}_proj*") or []):
+            try:
+                arcpy.management.Delete(os.path.join(self.scratch, stale))
+                log.info("%s: removed stale transient %s", key, stale)
+            except arcpy.ExecuteError as e:
+                log.warning("%s: could not remove stale transient %s: %s", key, stale,
+                            str(e).splitlines()[0][:120])
+        proj = self.path(f"{key}_proj_{time.strftime('%H%M%S')}")
         resampling = str(s.get("resampling", "BILINEAR")).upper()   # BILINEAR or CUBIC; never NEAREST
         if resampling == "NEAREST":
             raise SystemExit(f"{key}: NEAREST resampling on an elevation surface is not allowed")
@@ -447,7 +459,10 @@ class Pipeline:
         z = SetNull((z < self.z_lo) | (z > self.z_hi), z)
         out = self.path(f"{key}_std")
         z.save(out)
-        arcpy.management.Delete(proj)
+        try:
+            arcpy.management.Delete(proj)
+        except arcpy.ExecuteError as e:
+            log.warning("%s: transient %s not deleted: %s", key, Path(proj).name, str(e).splitlines()[0][:120])
         log.info("%s: saved %s", key, self.n(f"{key}_std"))
         # Advisory only: an all-NoData result means the source served nothing in this extent.
         # GetRasterProperties can fail outright on basin-sized rasters, so never let it abort.
