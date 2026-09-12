@@ -61,6 +61,18 @@ tiles it came from, fed as two sources so each is resampled exactly once by this
   `resampling_type` from the config, because a new mosaic dataset defaults to NEAREST and that
   is the artifact this rebuild exists to remove.
 
+## Run record: second basin build, OPR sources (2026-09-12)
+
+`--force` from step 1, 21:24 to 05:55, 8.5 h: step 2 88 min, step 3 103, step 4 38, step 5 49
+(with edge fill), step 6 170 (materialized feather chain; was 550), step 7 32, step 8 31.
+Offsets vs zone-10 2022: 2010 -0.002 m, green -0.061 m, sonar +0.848 m (skin, IQR 4.7, TILT).
+East-vs-west diagnostic starved again (361 usable of 500,000): the meridian overlap is a
+sliver, and step 3 samples the step 2 rasters, before the edge fill. Area by source: zone 10
+477 km2, zone 11 333, 2010 43 (was 51 with the old raster), green 33, sonar 466. 15 NoData
+cells. Seam cells: median 3x3 range 0.12 m, p99 2.36 m, max 2.40 m (old raster: 3.86 / 4.94).
+Results reproduced the lost 2026-09-11 build to within 0.2 km2 per source and 1 cm per offset.
+Products exported 05:23 with run markers; scratch cleaned to 54.6 GB free.
+
 ## Incident 2026-09-11: mosaic dropped before export
 
 The first basin run with the OPR sources (steps 5-8 resumed without --force) built the new
