@@ -87,10 +87,13 @@ def main(argv=None):
             log.warning("east-vs-west offset %+.3f m is large for one product in two zones; "
                         "check overlap_qa before trusting this DEM", offset)
 
-    # 3. Merge: zone-10 wins where both have data
-    west = arcpy.Raster(p.path(f"{WEST}_std"))
+    # 3. Merge: zone-10 wins where both have data. Each half is first grown a couple of cells into
+    #    NoData so the strip along the meridian that bilinear resampling leaves uncovered closes.
+    west = p.fill_edges(arcpy.Raster(p.path(f"{WEST}_std")), p.active[WEST].get("edge_fill_cells", 0), WEST)
     if EAST in halves:
-        east = arcpy.Raster(p.path(f"{EAST}_std")) + offset if offset else arcpy.Raster(p.path(f"{EAST}_std"))
+        east = p.fill_edges(arcpy.Raster(p.path(f"{EAST}_std")), p.active[EAST].get("edge_fill_cells", 0), EAST)
+        if offset:
+            east = east + offset
         dem = Con(IsNull(west), east, west)
         zone = Con(IsNull(west), Con(IsNull(east), 0, 2), 1)
     else:
@@ -138,6 +141,8 @@ def main(argv=None):
         "sources: " + "; ".join(f"{p.active[k]['label']} -> {p.active[k]['path']}" for k in halves),
         f"zone raster: 1 = zone-10 tiles on their native grid (bilinear 0.5 m -> {cell:g} m), "
         f"2 = zone-11 tiles projected to UTM 10N (bilinear), zone 1 wins where both exist",
+        f"edge fill: NoData within {p.active[WEST].get('edge_fill_cells', 0)} cell(s) of data filled from "
+        f"the mean of valid neighbours (closes the resampling strip along the 120th meridian)",
         f"east-vs-west shift applied to zone-11 half: {offset:+.3f} m",
         f"water: {water_note}",
         f"plausible elevation filter: {p.z_lo} to {p.z_hi} m",
