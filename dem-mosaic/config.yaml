@@ -145,7 +145,7 @@ sources:
     year: 2010
     native_cell_m: 2.0      # from file
     h_datum: NAD83 UTM 10N (EPSG 26910)   # from file
-    v_datum: TODO           # not in file. Likely NAVD88 with GEOID09 -> decimeter offset vs GEOID18 possible
+    v_datum: NAVD88 (geoid model not stated; OpenTopography record, doi 10.5069/G9PN93H2)
     z_units: m              # from value range (1,881 to 3,317)
     vertical_offset_m: auto
     hydro_flattened: true   # single constant elevation over the lake
@@ -153,13 +153,17 @@ sources:
     id: 2
 
   green_2020:
+    # Key kept as green_2020 (it is referenced throughout); the survey is 2018. SDE metadata:
+    # "Bare Earth Digital Elevation Model - Nearshore Lake Tahoe - 2018", Quantum Spatial for
+    # Spatial Informatics Group under TRPA contract, Riegl VQ-880-G (532 nm) in a Cessna
+    # Caravan, flown 2018-09-09 to 2018-09-16, NAD83(2011) UTM 10N, NAVD88 GEOID12B, 0.5 m.
     path: F:/GIS/DB_CONNECT/Raster.sde/SDE.Nearshore_BareEarth_DEM
-    label: 2020 topobathymetric (green) LiDAR
+    label: 2018 topobathymetric (green) LiDAR
     type: topobathy
-    year: 2020
+    year: 2018
     native_cell_m: 0.5      # from file
-    h_datum: NAD83 UTM 10N (EPSG 26910)   # from file
-    v_datum: TODO           # not in file
+    h_datum: NAD83(2011) UTM 10N (stored as NAD83 UTM 10N, EPSG 26910)
+    v_datum: NAVD88 (GEOID12B)   # per SDE metadata; the -0.06 m offset vs 2022 (GEOID18) matches a geoid-model difference
     z_units: m              # from value range (1,885 to 2,042). Min is only ~13 m below lake level.
     vertical_offset_m: auto
     hydro_flattened: false
@@ -179,12 +183,14 @@ sources:
     year: 1999
     native_cell_m: 10.0     # from file
     h_datum: NAD83 UTM 11N (EPSG 26911)   # from file. Different zone from the others.
-    # Basin run 2026-09-07: topo skin vs 2022 lidar on low-slope land = -1.19 m
-    # (n=1705), i.e. ~3.9 ft, the NGVD29 -> NAVD88 shift here. Solved offset +1.19 m
-    # assumes the bathy half shares the skin's datum; the shelf diagnostic cannot
-    # confirm that because the 0-13 m zone of this grid is interpolated fill.
-    # Worst case is ~1 m in 100-500 m deep water.
-    v_datum: NGVD29 (inferred from -1.19 m vs 2022 on land)
+    # USGS DDS-55 v1.0 (Dartnell and Gardner, 1999), 10 m grid of the Aug 1998 EM1000
+    # multibeam survey. Basin runs: topo skin vs 2022 lidar on low-slope land = -1.19 m
+    # (old 2022 raster) and -0.85 m (OPR tiles), IQR 4.5 m either way, i.e. an NGVD29-era
+    # reference resolved only to ~0.5 m. The solved offset assumes the bathy half shares
+    # the skin's reference; the shelf diagnostic cannot confirm it because the 0-13 m band
+    # diverges from the 2018 green lidar with depth (~3 m per 10 m) for reasons the product
+    # does not document (interpolation, or the 2000 SHOALS merge). Worst case ~1 m in deep water.
+    v_datum: NGVD29-era lake reference (inferred; skin -0.85 m vs 2022 NAVD88 on land)
     z_units: ft             # from value range (4,593 to 10,053)
     vertical_offset_m: auto
     hydro_flattened: false
@@ -260,32 +266,81 @@ metadata:
   title: Lake Tahoe Basin Bare-Earth DEM, 1 meter (2026 mosaic)
   organization: Tahoe Regional Planning Agency (TRPA)
   contact_name: Mason Bindl
-  contact_email: TODO           # agency contact address to publish
+  contact_email: gis@trpa.gov
   contact_phone: null
-  publish_date: "2026-09-08"
-  # Vertical datum statement for the product. It is the 2022 lidar's datum; fill in
-  # from the vendor report (likely NAVD88, GEOID18).
-  vertical_datum: NAVD88 (inherited from the 2022 USGS OPR bare-earth tiles; geoid model per USGS CA_SierraNevada_B22 project report)
+  publish_date: "2026-09-12"   # date of the basin build from the OPR sources
+  # Vertical datum statement for the product: the 2022 lidar's datum.
+  vertical_datum: NAVD88 (EPSG 5703), GEOID18, inherited from the 2022 USGS OPR bare-earth tiles (CA_SierraNevada_B22 project report, 2024-10-25)
   credits: >
-    Tahoe Regional Planning Agency. Source data: 2022 and 2010 terrestrial lidar bare-earth
-    DEMs, 2020 topobathymetric lidar nearshore DEM, and U.S. Geological Survey Lake Tahoe
-    multibeam bathymetry (Gardner and others, 2000).
-  # One paragraph per source for the lineage section. Fill vendor, program, and dates.
+    Tahoe Regional Planning Agency. Source data: U.S. Geological Survey 3D Elevation Program
+    CA_SierraNevada_B22 lidar (NV5 Geospatial, 2021-2022); Lake Tahoe Basin lidar (Watershed
+    Sciences, 2010, for TRPA and USGS); Lake Tahoe nearshore topobathymetric lidar (Quantum
+    Spatial for Spatial Informatics Group and TRPA, 2018); and USGS Lake Tahoe multibeam
+    bathymetry (Dartnell and Gardner, 1999, DDS-55; Gardner and others, 1998, 1999).
+  # One paragraph per source for the lineage section. Settled 2026-09-12 from the USGS 3DEP
+  # project report, OpenTopography, the SDE rasters' own metadata, and USGS publication records.
   source_citations:
-    lidar_2022_west: "U.S. Geological Survey 3DEP original product resolution (OPR) bare-earth DEM tiles, project CA_SierraNevada_B22, work units TahoeWest and ca_sierranevada_6, UTM zone 10N portion. 0.5 m, NAD83(2011), NAVD88. TODO: acquisition dates and reported vertical accuracy from the USGS project report."
-    lidar_2022_east: "U.S. Geological Survey 3DEP original product resolution (OPR) bare-earth DEM tiles, project CA_SierraNevada_B22, work unit TahoeEast, UTM zone 11N portion. 0.5 m, NAD83(2011), NAVD88. TODO: acquisition dates and reported vertical accuracy from the USGS project report."
-    lidar_2010: "TODO: vendor, program, acquisition dates, reported vertical accuracy."
-    green_2020: "TODO: vendor, program, acquisition dates, reported depth penetration and accuracy."
-    sonar_1999: "U.S. Geological Survey multibeam bathymetric survey of Lake Tahoe (Gardner, Mayer, and Hughes Clarke, 2000), gridded at 10 m and merged by USGS with a topographic skin. TODO: confirm survey year and product citation."
+    lidar_2022_west: >
+      U.S. Geological Survey 3D Elevation Program, lidar project CA_SierraNevada_B22, work units
+      CA_SierraNevada_5_2022_TahoeWest (USGS work unit 300245, collected 2021-11-12 to 2022-08-22)
+      and CA_SierraNevada_6_2022 (300246, 2021-11-03 to 2022-08-19). Collected by NV5 Geospatial,
+      Inc. under a USGS GPSC contract with Riegl VQ-1560ii and Leica TerrainMapper sensors, Quality
+      Level 1, Lidar Base Specification 2022 rev. A. Original product resolution (OPR) bare-earth
+      DEM tiles, 0.5 m, hydro-flattened, NAD83(2011) UTM zone 10N (EPSG 6339), NAVD88 (EPSG 5703)
+      with GEOID18. Project-level tested DEM accuracy: non-vegetated RMSEz 5.04 cm, 9.88 cm at
+      95 percent confidence; vegetated 24.69 cm at the 95th percentile. USGS project report dated
+      2024-10-25, https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/metadata/CA_SierraNevada_B22/USGS_CA_SierraNevada_B22_Project_Report.pdf
+    lidar_2022_east: >
+      U.S. Geological Survey 3D Elevation Program, lidar project CA_SierraNevada_B22, work unit
+      CA_SierraNevada_8_2022_TahoeEast (USGS work unit 300363, collected 2021-11-18 to 2022-08-25).
+      Collected by NV5 Geospatial, Inc. under a USGS GPSC contract with Riegl VQ-1560ii and Leica
+      TerrainMapper sensors, Quality Level 1, Lidar Base Specification 2022 rev. A. OPR bare-earth
+      DEM tiles, 0.5 m, hydro-flattened, NAD83(2011) UTM zone 11N (EPSG 6340), NAVD88 (EPSG 5703)
+      with GEOID18; projected once to UTM zone 10N by this pipeline. Project-level tested DEM
+      accuracy: non-vegetated RMSEz 5.04 cm, 9.88 cm at 95 percent confidence; vegetated 24.69 cm
+      at the 95th percentile. Same project report as the zone-10 half.
+    lidar_2010: >
+      Watershed Sciences, Inc., 2010, Lake Tahoe Basin LiDAR: airborne lidar collected 2010-08-11
+      to 2010-08-24 with two Leica ALS50 Phase II sensors under a contract administered by the
+      Tahoe Regional Planning Agency and the U.S. Geological Survey. Average first-return density
+      11.82 points per square meter, ground 2.26; reported vertical accuracy 3.5 cm RMSE.
+      Hydro-enforced bare-earth DEM, 0.5 m, NAD83 UTM zone 10N (EPSG 26910), NAVD88 (EPSG 5703);
+      geoid model not stated in the distribution record. TRPA holds a 2 m derivative in its
+      enterprise geodatabase. Distributed by OpenTopography, https://doi.org/10.5069/G9PN93H2
+    green_2020: >
+      Quantum Spatial, Inc., 2018, Lake Tahoe nearshore topobathymetric lidar: Riegl VQ-880-G
+      green-wavelength (532 nm) lidar flown 2018-09-09 to 2018-09-16 in a Cessna Caravan for
+      Spatial Informatics Group under contract to the Tahoe Regional Planning Agency, acquired
+      to support aquatic invasive species mapping and mooring permitting. Bare-earth DEM, 0.5 m,
+      from integrated green and near-infrared returns (TIN of ground and bathymetric bottom
+      points), clipped to avoid triangulation across data gaps. NAD83(2011) UTM zone 10N,
+      NAVD88 with GEOID12B. Source: TRPA enterprise geodatabase metadata for
+      SDE.Nearshore_BareEarth_DEM and Nearshore_LiDAR_Derivatives.gdb.
+    sonar_1999: >
+      Dartnell, P., and Gardner, J.V., 1999, Sea-floor images and data from multibeam surveys in
+      San Francisco Bay, Southern California, Hawaii, the Gulf of Mexico, and Lake Tahoe,
+      California-Nevada: U.S. Geological Survey Digital Data Series DDS-55, version 1.0,
+      https://pubs.usgs.gov/dds/dds-55/. Lake Tahoe bathymetry gridded at 10 m from the
+      1998-08-02 to 1998-08-17 Kongsberg Simrad EM1000 multibeam survey aboard RV Inland
+      Surveyor (Gardner, J.V., Mayer, L.A., and Hughes Clarke, J.E., 1998, USGS Open-File Report
+      98-509, https://doi.org/10.3133/ofr98509; map: Gardner, Dartnell, Mayer, and Hughes Clarke,
+      1999, USGS Water-Resources Investigations Report 99-4043). The copy in TRPA's enterprise
+      geodatabase (SDE.DEM_USGS_DeepWaterBathyTopo) is a bathymetry-plus-land-topography merge in
+      feet on NAD83 UTM zone 11N with no embedded metadata. Its vertical reference is not
+      documented and was reconciled empirically: the topographic skin sits 0.85 m below the 2022
+      NAVD88 lidar on stable ground, consistent with an NGVD29-era reference. USGS also released
+      a merge with July 2000 U.S. Army Corps of Engineers SHOALS lidar covering the shoreline to
+      about 15 m depth; whether this copy includes it is not documented.
   use_limitations: >
-    Not for navigation. The nearshore band from roughly the 2020 topobathymetric lidar's
-    depth limit (about 13 m) outward is transitional: the 1999 bathymetric grid is
-    interpolated in shallow water and the mosaic ramps between the two sources over 300 m.
-    Elevations there may be in error by several meters. The deep lake is 10 m sonar data
-    resampled to 1 m; the 1 m cell size does not imply 1 m detail there. Consult the
-    companion source-ID raster to identify which source informs any cell. Vertical datum
-    of the bathymetric source was inferred, not documented; absolute deep-water elevations
-    carry roughly 1 m uncertainty.
+    Not for navigation. The nearshore band from roughly the 2018 topobathymetric lidar's depth
+    limit (about 13 m) outward is transitional. Shallower than that, the 1998 USGS grid disagrees
+    with the 2018 lidar by an amount that grows with depth (about 3 m per 10 m); whether that
+    band of the grid is interpolated or older lidar is not documented. The mosaic prefers the
+    2018 lidar there and ramps between the two sources over 300 m, and elevations in the ramp
+    may be in error by several meters. The deep lake is 10 m sonar data resampled to 1 m; the
+    1 m cell size does not imply 1 m detail there. Consult the companion source-ID raster to
+    identify which source informs any cell. The vertical reference of the bathymetric source
+    was inferred, not documented; absolute deep-water elevations carry roughly 1 m uncertainty.
 
 outputs:
   # COG GeoTIFFs cannot live inside a gdb, so final products go to a folder beside Scratch.gdb

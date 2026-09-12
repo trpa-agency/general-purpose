@@ -73,6 +73,25 @@ cells. Seam cells: median 3x3 range 0.12 m, p99 2.36 m, max 2.40 m (old raster: 
 Results reproduced the lost 2026-09-11 build to within 0.2 km2 per source and 1 cm per offset.
 Products exported 05:23 with run markers; scratch cleaned to 54.6 GB free.
 
+## Source identities (settled 2026-09-12)
+
+- 2022 lidar: USGS 3DEP CA_SierraNevada_B22, NV5 Geospatial, QL1, GEOID18, hydro-flattened.
+  Work unit 5 TahoeWest (300245) flown 2021-11-12 to 2022-08-22, unit 6 (300246) 2021-11-03 to
+  2022-08-19, unit 8 TahoeEast (300363) 2021-11-18 to 2022-08-25. Tested DEM NVA 5.04 cm RMSE.
+- 2010 lidar: Watershed Sciences for TRPA and USGS, 2010-08-11 to 08-24, NAVD88, 3.5 cm RMSE,
+  OpenTopography doi 10.5069/G9PN93H2.
+- "green_2020" is actually 2018: Quantum Spatial for Spatial Informatics Group under TRPA
+  contract, Riegl VQ-880-G, 2018-09-09 to 09-16, NAVD88 GEOID12B (from the SDE raster's own
+  metadata). The config key stays `green_2020`; label and year say 2018.
+- Sonar: USGS DDS-55 v1.0 (Dartnell and Gardner, 1999) from the Aug 1998 EM1000 survey (OFR
+  98-509, WRIR 99-4043). The SDE copy has no metadata. USGS also released a merge with July
+  2000 SHOALS lidar (shoreline to ~15 m); unknown whether the SDE copy includes it, so the
+  earlier "interpolated fill" wording for the 0-13 m band is now stated as "undocumented,
+  diverges with depth" in config and metadata.
+- USGS publication servers (pubs.usgs.gov, cmgds.marine.usgs.gov) refuse automated fetches;
+  citations above came from search snippets, the 3DEP project report PDF (fetchable from
+  rockyweb.usgs.gov), OpenTopography, and the SDE metadata itself.
+
 ## Incident 2026-09-11: mosaic dropped before export
 
 The first basin run with the OPR sources (steps 5-8 resumed without --force) built the new
