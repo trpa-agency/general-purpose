@@ -76,6 +76,17 @@ cells. Seam cells: median 3x3 range 0.12 m, p99 2.36 m, max 2.40 m (old raster: 
 Results reproduced the lost 2026-09-11 build to within 0.2 km2 per source and 1 cm per offset.
 Products exported 05:23 with run markers; scratch cleaned to 54.6 GB free.
 
+## Step 6 disk and feathering (2026-09-13)
+
+Third basin run (six sources) died in step 6: EucDistance wanted 18.6 GB of temp with 11.4 GB
+free, because every feathered level was kept until the end of the step. Now: `feather_sources`
+in config restricts feathering to the winner that needs it (green_2020 over the sonar);
+other levels stay a lazy Con chain. Only feathered levels and the level just below one are
+materialized (`dm_acc_<zone>_<level>`), each dropped as soon as the next exists; stale
+accumulators are swept at the start; a resume jumps to the highest surviving level. Step 6
+checks free space first. Peak need in step 6 is about one distance pass (~2 rasters of temp)
+plus two materialized levels on top of the clean rasters.
+
 ## Meridian wedges (found 2026-09-12)
 
 The OPR work units 5 (zone 10) and 8 (zone 11) are tiled so that two wedges along 120 W fall

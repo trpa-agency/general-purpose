@@ -802,32 +802,69 @@ class Pipeline:
         feather = float(blend["feather_m"] or 0)
         if zone_name not in (blend.get("feather_zones") or ["land", "water"]):
             feather = 0.0
-        log.info("%s chain %s: feather %.0f m", zone_name, keys, feather)
+        # Which winners get feathered into their fallback. Default all; the config restricts it
+        # to the seam that matters (green lidar over sonar at its depth limit), because every
+        # feathered level costs a basin-sized distance pass and a materialized raster.
+        feather_set = set(blend.get("feather_sources") or keys)
         keys = [k for k in keys if self.exists(f"{k}_clean")]
         if not keys:
             raise SystemExit("no cleaned sources found; run step 5")
+        rev = list(reversed(keys))
+        feathered = [feather > 0 and k in feather_set for k in rev]
+        # A level is materialized when it is feathered (the blend references the fallback three
+        # times) or when the next level is feathered (so that blend reads a disk raster, not a
+        # lazy chain). Everything else stays a lazy, linear Con chain.
+        materialize = [feathered[i] or (i + 1 < len(rev) and feathered[i + 1]) for i in range(len(rev))]
+        log.info("%s chain %s: feather %.0f m on %s; materialized levels %s", zone_name, keys, feather,
+                 [k for k, f in zip(rev, feathered) if f], [i for i, m in enumerate(materialize) if m and i])
+
+        # Stale accumulators from an earlier scheme or an interrupted run: keep only the ones this
+        # run can reuse, or they sit on disk while the distance pass runs out of temp space.
+        wanted = {f"acc_{zone_name}_{i}" for i, m in enumerate(materialize) if m and i}
+        arcpy.env.workspace = self.scratch
+        for stale in (arcpy.ListRasters(f"{self.n(f'acc_{zone_name}_')}*") or []):
+            bare = stale[len(self.pfx):]
+            if bare not in wanted or self.force:
+                self.drop(bare)
+
+        # Resume from the highest materialized level still on disk: everything below it is
+        # already folded in, so only the source-ID chain needs rebuilding for those levels.
+        resume_at = None if self.force else max(
+            (i for i in range(1, len(rev)) if materialize[i] and self.exists(f"acc_{zone_name}_{i}")), default=None)
+        if resume_at is not None:
+            log.info("%s chain: resuming from materialized level %d (%s)", zone_name, resume_at, rev[resume_at])
+            self.drop(*[f"acc_{zone_name}_{i}" for i in range(1, resume_at) if materialize[i]])
+
         val = sid = None
-        acc = []   # materialized accumulators, dropped by the caller once the mosaic is saved
-        for level, key in enumerate(reversed(keys)):
+        acc = []   # the one materialized level currently alive; dropped by the caller after the mosaic saves
+        for level, key in enumerate(rev):
             r = arcpy.Raster(self.path(f"{key}_clean"))
             i = int(self.src[key]["id"])
             if val is None:
                 val, sid = r, Con(IsNull(r), 0, i)
                 continue
-            if feather > 0:
+            if resume_at is not None and level <= resume_at:
+                if level == resume_at:
+                    acc = [f"acc_{zone_name}_{level}"]
+                    val = arcpy.Raster(self.path(acc[0]))
+                sid = Con(IsNull(r), sid, i)
+                continue
+            if feathered[level]:
                 d = EucDistance(Con(IsNull(r), 1), feather)   # distance from r's edge, inside r
                 w = Con(IsNull(d), 1.0, d / feather)           # 0 at edge -> 1 at feather distance
-                blended = Con(IsNull(r), val, Con(IsNull(val), r, w * r + (1 - w) * val))
-                # `val` appears three times above. Left lazy, the expression tree triples per
-                # source and the whole chain is re-evaluated at save: 3 h for four sources,
-                # 9 h for five. Materialize each level so the cost is one pass per source.
-                name = f"acc_{zone_name}_{level}"
-                blended.save(self.path(name))
-                acc.append(name)
-                val = arcpy.Raster(self.path(name))
-                log.info("%s chain: level %d (%s) materialized", zone_name, level, key)
+                expr = Con(IsNull(r), val, Con(IsNull(val), r, w * r + (1 - w) * val))
             else:
-                val = Con(IsNull(r), val, r)
+                expr = Con(IsNull(r), val, r)
+            if materialize[level]:
+                name = f"acc_{zone_name}_{level}"
+                expr.save(self.path(name))
+                log.info("%s chain: level %d (%s) materialized%s", zone_name, level, key,
+                         " with feather" if feathered[level] else "")
+                self.drop(*acc)          # the level below is consumed
+                acc = [name]
+                val = arcpy.Raster(self.path(name))
+            else:
+                val = expr
             sid = Con(IsNull(r), sid, i)
         return val, sid, acc
 
@@ -838,6 +875,9 @@ class Pipeline:
         if not self.stale("dem_mosaic") and self.exists("dem_source"):
             log.info("mosaic exists, skipping")
             return
+        # Each feather level needs about two rasters' worth of temporary space for the distance pass
+        # on top of the level itself and the clean rasters already on disk.
+        self.check_disk(n_rasters=4)
         zone = self.zone
         land_val, land_sid, land_acc = self._first_valid(self.cfg["priority"]["land"], "land")
         water_val, water_sid, water_acc = self._first_valid(self.cfg["priority"]["water"], "water")
