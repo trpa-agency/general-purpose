@@ -73,6 +73,20 @@ cells. Seam cells: median 3x3 range 0.12 m, p99 2.36 m, max 2.40 m (old raster: 
 Results reproduced the lost 2026-09-11 build to within 0.2 km2 per source and 1 cm per offset.
 Products exported 05:23 with run markers; scratch cleaned to 54.6 GB free.
 
+## Meridian wedges (found 2026-09-12)
+
+The OPR work units 5 (zone 10) and 8 (zone 11) are tiled so that two wedges along 120 W fall
+in neither: 7.7 km2 over the north-central lake (E ~759,300, N 4,329,000-4,345,000) and
+7.4 km2 on land south of the lake (E ~760,300, N 4,300,000-4,314,000). Every staged tile in
+every work unit (checked against the USGS S3 bucket; Mason's link lists are complete) only
+touches their edges. In the mosaic they fell through to 2010 lidar (land) and green lidar /
+sonar (water); the standalone 2022 DEM showed them as holes. USGS's seamless 1 m DEM for the
+project was built per zone from the merged point cloud and holds real terrain across both
+(verified on tile x76y431). Fix: third 2022 source `lidar_2022_1m` from ten zone-10 1 m
+tiles (`data/usgs_2022_1m_wedge_patch_urls.txt`, 1.28 GB), ranked just below the OPR
+halves. Note the 1 m tile name index is the tile's TOP/LEFT edge in 10 km units
+(x76y431 = E 760-770 km, N 4,300-4,310 km).
+
 ## Source identities (settled 2026-09-12)
 
 - 2022 lidar: USGS 3DEP CA_SierraNevada_B22, NV5 Geospatial, QL1, GEOID18, hydro-flattened.
