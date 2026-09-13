@@ -56,6 +56,9 @@ tiles it came from, fed as two sources so each is resampled exactly once by this
   500,000 for the east-vs-west check). Bilinear resampling loses ~half a cell per data edge, so
   a 1-2 cell strip along the meridian had no 2022 data. `edge_fill_cells: 2` on both halves
   fills NoData within two cells of data from the mean of valid neighbours, before the water strip.
+- `scripts/fetch_1m_patch.py` downloads the ten 1 m patch tiles to `server_paths.onem_tiles`
+  (skips tiles already present with the right size, verifies each transfer) and with `--build`
+  makes the `lidar_2022_1m` mosaic dataset. `server_paths` in config holds the server folders.
 - `scripts/build_2022_source.py` inventories the tiles and builds one mosaic dataset per zone
   in `C:\GIS\lidar2022.gdb`, referencing tiles in place. It sets each mosaic dataset's
   `resampling_type` from the config, because a new mosaic dataset defaults to NEAREST and that

@@ -10,6 +10,12 @@ project:
   name_prefix: dm_
   log_file: C:/GIS/dem-mosaic/dem_mosaic.log
 
+# Where the 2022 source tiles live on the GIS server. Used as defaults by
+# build_2022_source.py (--tiles / --onem-tiles) and fetch_1m_patch.py (--dest).
+server_paths:
+  opr_tiles: //vcenter2/GIS_DATA/LiDAR/2022/DEM/DEM_downloads
+  onem_tiles: //vcenter2/GIS_DATA/LiDAR/2022/DEM/DEM_downloads/USGS_1M_patch
+
 # SDE connection files. READ ONLY. Sources are read via Raster.sde, boundaries via
 # Vector.sde. Nothing in this project writes to SDE.
 sde:

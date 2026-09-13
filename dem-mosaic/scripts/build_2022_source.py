@@ -176,12 +176,18 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="rebuild mosaic datasets that already exist")
     ap.add_argument("--limit", type=int, default=0, help="testing: add at most N tiles per zone")
     ap.add_argument("--aoi-csv", default=str(AOI_CSV), help="testing: alternate tile list")
+    ap.add_argument("--from-config", action="store_true",
+                    help="use server_paths.opr_tiles and server_paths.onem_tiles from config.yaml for any folder not given")
     args = ap.parse_args(argv)
+    if args.from_config:
+        sp = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8")).get("server_paths", {})
+        args.tiles = args.tiles or sp.get("opr_tiles")
+        args.onem_tiles = args.onem_tiles or sp.get("onem_tiles")
     if args.onem_tiles:
         build_onem(args.onem_tiles, args.gdb, args.force, partial_ok=args.partial_ok)
     if not args.tiles:
         if not args.onem_tiles:
-            ap.error("give --tiles (OPR folder) and/or --onem-tiles (1 m patch folder)")
+            ap.error("give --tiles (OPR folder) and/or --onem-tiles (1 m patch folder), or --from-config")
         return
 
     aoi = pd.read_csv(args.aoi_csv)
