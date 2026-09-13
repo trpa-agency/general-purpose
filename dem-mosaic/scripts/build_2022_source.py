@@ -4,6 +4,7 @@ Usage (arcgispro-py3, on the GIS server):
     python build_2022_source.py --tiles \\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\DEM\\DEM_downloads
     python build_2022_source.py --tiles <folder> --inventory-only     # just report present / missing
     python build_2022_source.py --tiles <folder> --gdb C:\\GIS\\lidar2022.gdb
+    python build_2022_source.py --onem-tiles <folder>          # the ten USGS 1 m tiles that patch the meridian wedges
 
 What it does
     1. Walks --tiles recursively for USGS_OPR_*_<zone>S<sq><eeee>.tif files and keys them by tile ID.
@@ -111,15 +112,83 @@ def verify_bare_earth(paths, ref_dem, n_tiles=3, n_pts=300):
     return pd.DataFrame(rows)
 
 
+def build_onem(folder, gdb, force, partial_ok=False):
+    """Mosaic dataset of the USGS seamless 1 m tiles that patch the meridian wedges.
+
+    The OPR work units 5 and 8 leave two wedges along 120 W in neither unit; USGS's 1 m
+    product for the same project was generated per zone from the merged point cloud and
+    covers them. See config source lidar_2022_1m and data/usgs_2022_1m_wedge_patch_urls.txt.
+    """
+    cfg = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
+    src = cfg["sources"].get("lidar_2022_1m", {})
+    tifs = sorted(Path(folder).rglob("USGS_1M_*.tif"))
+    if not tifs:
+        raise SystemExit(f"no USGS_1M_*.tif under {folder}")
+    zones = sorted({re.search(r"USGS_1M_(\d+)_", t.name).group(1) for t in tifs})
+    if zones != ["10"]:
+        raise SystemExit(f"expected zone-10 1 m tiles only, found zones {zones}")
+    want = {Path(u).name for u in (REPO / "data" / "usgs_2022_1m_wedge_patch_urls.txt").read_text().split()}
+    have = {t.name for t in tifs}
+    missing = sorted(want - have)
+    print(f"1 m patch tiles: {len(have & want)} of {len(want)} expected on disk"
+          f"{', extra ' + str(len(have - want)) if have - want else ''}; missing {len(missing)}")
+    if missing and not partial_ok:
+        raise SystemExit("download the missing tiles first: " + ", ".join(missing))
+    tifs = [t for t in tifs if t.name in want]
+
+    gdb = Path(gdb)
+    if not arcpy.Exists(str(gdb)):
+        arcpy.management.CreateFileGDB(str(gdb.parent), gdb.name)
+    arcpy.env.overwriteOutput = True
+    name = Path(src.get("path", "usgs1m_2022_utm10")).name
+    md = str(gdb / name)
+    if arcpy.Exists(md):
+        if not force:
+            print(f"{md} exists ({int(arcpy.management.GetCount(md)[0])} items); use --force to rebuild")
+            return
+        arcpy.management.Delete(md)
+    sr = arcpy.Describe(str(tifs[0])).spatialReference
+    print(f"creating {md} in {sr.name} with {len(tifs)} tiles")
+    arcpy.management.CreateMosaicDataset(str(gdb), name, sr, num_bands=1, pixel_type="32_BIT_FLOAT")
+    arcpy.management.AddRastersToMosaicDataset(
+        md, "Raster Dataset", [str(t) for t in tifs],
+        update_cellsize_ranges="UPDATE_CELL_SIZES", update_boundary="UPDATE_BOUNDARY",
+        update_overviews="NO_OVERVIEWS", maximum_pyramid_levels=0,
+        build_pyramids="NO_PYRAMIDS", calculate_statistics="NO_STATISTICS",
+        duplicate_items_action="EXCLUDE_DUPLICATES", build_thumbnails="NO_THUMBNAILS",
+        estimate_statistics="NO_STATISTICS")
+    method = str(src.get("resampling", "BILINEAR")).upper()
+    arcpy.management.SetMosaicDatasetProperties(md, resampling_type=method)
+    r = arcpy.Raster(md)
+    print(f"  {name}: {int(arcpy.management.GetCount(md)[0])} items, cell {r.meanCellWidth} m, resampling {method}, "
+          f"extent {r.extent.XMin:.0f} {r.extent.YMin:.0f} {r.extent.XMax:.0f} {r.extent.YMax:.0f}")
+    print(f"config.yaml source path:\n  lidar_2022_1m: path: {(gdb / name).as_posix()}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tiles", required=True, help="folder holding the downloaded OPR tiles (searched recursively)")
+    ap.add_argument("--tiles", help="folder holding the downloaded OPR tiles (searched recursively)")
+    ap.add_argument("--onem-tiles", metavar="FOLDER",
+                    help="folder holding the ten USGS 1 m patch tiles; builds the lidar_2022_1m mosaic dataset")
+    ap.add_argument("--partial-ok", action="store_true", help="testing: build the 1 m patch from whatever tiles are present")
     ap.add_argument("--gdb", default=r"C:\GIS\lidar2022.gdb", help="file gdb for the mosaic datasets")
     ap.add_argument("--inventory-only", action="store_true")
     ap.add_argument("--force", action="store_true", help="rebuild mosaic datasets that already exist")
     ap.add_argument("--limit", type=int, default=0, help="testing: add at most N tiles per zone")
     ap.add_argument("--aoi-csv", default=str(AOI_CSV), help="testing: alternate tile list")
+    ap.add_argument("--from-config", action="store_true",
+                    help="use server_paths.opr_tiles and server_paths.onem_tiles from config.yaml for any folder not given")
     args = ap.parse_args(argv)
+    if args.from_config:
+        sp = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8")).get("server_paths", {})
+        args.tiles = args.tiles or sp.get("opr_tiles")
+        args.onem_tiles = args.onem_tiles or sp.get("onem_tiles")
+    if args.onem_tiles:
+        build_onem(args.onem_tiles, args.gdb, args.force, partial_ok=args.partial_ok)
+    if not args.tiles:
+        if not args.onem_tiles:
+            ap.error("give --tiles (OPR folder) and/or --onem-tiles (1 m patch folder), or --from-config")
+        return
 
     aoi = pd.read_csv(args.aoi_csv)
     aoi["tile"] = aoi["tile"].str.upper()
