@@ -1,10 +1,18 @@
 """Write ArcGIS-format metadata to the DEM mosaic outputs.
 
 Usage (arcgispro-py3):
-    python write_metadata.py                 # write metadata to the three COGs in outputs.dir, then synchronize
+    python write_metadata.py                 # write metadata to all six COGs in outputs.dir, then synchronize
     python write_metadata.py --dry-run       # only write the XML files next to the outputs, touch nothing
     python write_metadata.py --dry-run --out C:\\temp\\md   # XML to another folder (no arcpy dataset access needed)
+    python write_metadata.py --product mosaic            # or standalone: one family only
     python write_metadata.py --test          # target the *_test.tif outputs instead
+    python write_metadata.py --apply-to dem=<sde raster> --apply-to source_id=<sde raster> ...
+                                             # after loading the COGs into an enterprise geodatabase, write the
+                                             # same metadata to those datasets (Copy Raster does not carry it)
+
+Products covered: the basin mosaic (dem, source_id, hillshade: tahoe_dem_mosaic_*) and the standalone
+2022 lidar DEM (dem2022, zone2022, hs2022: tahoe_dem_2022_<cell>m*). The standalone's text reads the
+provenance file build_2022_dem.py writes, so its water handling and shifts are the ones actually applied.
 
 What it does
     1. Reads config.yaml (metadata block, sources, priority, blend) and the run outputs
@@ -53,12 +61,37 @@ def load_run(cfg, test):
     if p.exists():
         offsets = yaml.safe_load(p.read_text(encoding="utf-8"))
     return dict(out=out, sfx=sfx, offsets=offsets, qa=csv("overlap_qa"), area=csv("area_by_source"),
-                seams=csv("seam_stats"), water=csv("water_surface"), inventory=csv("source_inventory"))
+                seams=csv("seam_stats"), water=csv("water_surface"), inventory=csv("source_inventory"),
+                standalone=load_standalone(cfg, sfx))
 
 
 def out_file(cfg, key, sfx):
     stem, ext = Path(cfg["outputs"][key]).stem, Path(cfg["outputs"][key]).suffix
     return Path(cfg["outputs"]["dir"]) / f"{stem}{sfx}{ext}"
+
+
+# Standalone 2022 product (build_2022_dem.py): file stems and the provenance text it writes.
+STANDALONE = {"dem2022": "", "zone2022": "_zone", "hs2022": "_hs"}
+MOSAIC = {"dem": "dem", "source_id": "source_id", "hillshade": "hillshade"}
+
+
+def standalone_file(cfg, kind, sfx):
+    cell = float(cfg["target"]["cell_size_m"])
+    return Path(cfg["outputs"]["dir"]) / f"tahoe_dem_2022_{cell:g}m{sfx}{STANDALONE[kind]}.tif"
+
+
+def load_standalone(cfg, sfx):
+    """Parse the key: value provenance text build_2022_dem.py writes beside its COGs."""
+    cell = float(cfg["target"]["cell_size_m"])
+    p = Path(cfg["outputs"]["dir"]) / f"tahoe_dem_2022_{cell:g}m{sfx}.txt"
+    if not p.exists():
+        return None
+    prov = {"_file": p}
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            prov[k.strip()] = v.strip()
+    return prov
 
 
 # --------------------------------------------------------------------------- text
@@ -238,6 +271,117 @@ def source_paragraphs(cfg, run):
     return paras
 
 
+# --------------------------------------------------------------------------- standalone 2022 text
+def sa_sources(cfg, run):
+    """The 2022 sources in the standalone's priority order, from its provenance text if present."""
+    prov = run["standalone"] or {}
+    keys = [k for k in ("lidar_2022_west", "lidar_2022_east", "lidar_2022_1m") if k in cfg["sources"]]
+    if prov.get("sources"):
+        found = [k for k in keys if cfg["sources"][k]["label"] in prov["sources"]]
+        if found:
+            keys = found
+    return keys
+
+
+def sa_abstract(cfg, run, kind):
+    m = cfg["metadata"]
+    t = cfg["target"]
+    prov = run["standalone"] or {}
+    keys = sa_sources(cfg, run)
+    labels = [cfg["sources"][k]["label"] for k in keys]
+    water = prov.get("water", "lake left hydro-flattened as delivered by USGS")
+    core = (
+        f"Bare-earth digital elevation model of the Lake Tahoe Basin from the 2022 U.S. Geological Survey 3D "
+        f"Elevation Program lidar (project CA_SierraNevada_B22), {t['cell_size_m']:g} m cell size, covering the "
+        f"TRPA jurisdictional boundary and the lake. Built from {len(keys)} inputs of the same acquisition, in "
+        f"priority order {'; '.join(labels)}: the first with valid data at a cell wins. The zone-10 tiles define "
+        f"the output grid and are resampled once from 0.5 m; the zone-11 tiles are projected once from UTM zone "
+        f"11N; the 1 m tiles fill two wedges along the 120th meridian that neither work unit covers. "
+        f"{prov.get('edge fill', 'NoData within two cells of data was filled from neighbouring values')}. "
+        f"Water: {water}. Horizontal reference NAD 1983 UTM Zone 10N, meters. Vertical datum: "
+        f"{m['vertical_datum']}. NoData value {t['nodata']}."
+    )
+    if kind == "dem2022":
+        return core
+    if kind == "zone2022":
+        ids = "; ".join(f"{i + 1} = {cfg['sources'][k]['label']}" for i, k in enumerate(keys))
+        return (f"Zone raster accompanying the 2022 lidar bare-earth DEM. Each cell holds the integer ID of the "
+                f"input that supplied the DEM value: {ids}. Value 3 marks the meridian wedges filled from the "
+                f"1 m product. Companion to: {m['title_2022']}. Summary: {core}")
+    if kind == "hs2022":
+        return (f"Hillshade (azimuth 315, altitude 45, z factor 1) of the 2022 lidar bare-earth DEM, provided for "
+                f"visual quality assessment and cartography. Not an elevation dataset. Companion to: "
+                f"{m['title_2022']}. Summary: {core}")
+    raise ValueError(kind)
+
+
+def sa_purpose(kind):
+    return {
+        "dem2022": ("Single-vintage 2022 bare-earth surface for the basin, resampled once from the USGS "
+                    "deliverables, for terrain analysis, change detection against earlier lidar, and as the "
+                    "land component and vertical reference of the basin DEM mosaic."),
+        "zone2022": "Provenance layer showing which 2022 input, and therefore which native resolution, informs each cell.",
+        "hs2022": "Visual check of seams, artifacts, and terrain texture in the 2022 DEM.",
+    }[kind]
+
+
+def sa_lineage(cfg, run):
+    prov = run["standalone"] or {}
+    lines = ["Produced with dem-mosaic/scripts/build_2022_dem.py (TRPA general-purpose repository), which "
+             "reuses the basin mosaic pipeline's projection, snapping, plausibility filter, and edge fill so "
+             "that this product and the mosaic agree cell for cell where both use the 2022 lidar. The OPR "
+             "tiles were read through one mosaic dataset per UTM zone and the 1 m tiles through a third."]
+    if prov.get("shifts applied relative to the zone-10 half"):
+        lines.append("Shifts applied relative to the zone-10 half: "
+                     f"{prov['shifts applied relative to the zone-10 half']}.")
+    if run["qa"] is not None:
+        q = run["qa"]
+        r = q[(q["source"] == "lidar_2022_1m") & (q["reference"] == "lidar_2022_west")]
+        if len(r) and pd.notna(r.iloc[0].get("median")):
+            r = r.iloc[0]
+            lines.append(f"Agreement check between the 1 m tiles and the zone-10 OPR tiles on low-slope land: "
+                         f"median {r['median']:+.3f} m, IQR {r['iqr']:.3f} m, n={int(r['n_used'])}.")
+    if prov.get("grid"):
+        lines.append(f"Grid: {prov['grid']}.")
+    return " ".join(lines)
+
+
+def sa_steps(cfg, run):
+    t = cfg["target"]
+    prov = run["standalone"] or {}
+    keys = sa_sources(cfg, run)
+    fills = ", ".join(f"{cfg['sources'][k]['label']} {cfg['sources'][k].get('edge_fill_cells', 0)}" for k in keys)
+    return [
+        ("Project", f"Projected each input to NAD 1983 UTM Zone 10N with bilinear resampling at "
+                    f"{t['cell_size_m']:g} m, snapped to a grid registered at integer meters defined by the "
+                    f"zone-10 tiles. Values outside {t['plausible_z_m'][0]} to {t['plausible_z_m'][1]} m set to NoData."),
+        ("Align", "Vertical shifts relative to the zone-10 half taken from the mosaic pipeline's solved offsets "
+                  "or the config: " + prov.get("shifts applied relative to the zone-10 half", "none") + "."),
+        ("Edge fill", f"NoData within N cells of data filled from the mean of valid neighbours (N per input: {fills}), "
+                      "closing the strip that bilinear resampling leaves uncovered along the 120th meridian."),
+        ("Merge", "First input with valid data wins, in priority order " + "; ".join(cfg["sources"][k]["label"] for k in keys)
+                  + "; a zone raster records the winner."),
+        ("Water", prov.get("water", "lake left hydro-flattened as delivered by USGS") + "."),
+        ("Export", f"Wrote Cloud Optimized GeoTIFFs with {t['compression']} compression and pyramids: DEM "
+                   f"(32-bit float, NoData {t['nodata']}), zone (8-bit unsigned, NoData 0), hillshade; plus a "
+                   f"provenance text file."),
+    ]
+
+
+def sa_source_paragraphs(cfg, run):
+    inv = run["inventory"]
+    paras = []
+    for key in sa_sources(cfg, run):
+        s = cfg["sources"][key]
+        cite = cfg["metadata"]["source_citations"].get(key, "")
+        tech = f"Native cell {s['native_cell_m']:g} m; horizontal reference {s['h_datum']}; units {s['z_units']}."
+        if inv is not None and key in inv["key"].values:
+            r = inv[inv["key"] == key].iloc[0]
+            tech += f" Value range {r['zmin']:.1f} to {r['zmax']:.1f} {s['z_units']}."
+        paras.append((s["label"], f"{cite} {tech} Vertical datum: {s['v_datum']}."))
+    return paras
+
+
 # --------------------------------------------------------------------------- xml
 def sub(parent, tag, text=None, **attrs):
     e = ET.SubElement(parent, tag, attrs)
@@ -262,9 +406,33 @@ def contact(parent, tag, cfg, role_code):
 def build_xml(cfg, run, kind):
     m = cfg["metadata"]
     now = dt.datetime.now()
+    sa = kind in STANDALONE
     titles = {"dem": m["title"],
               "source_id": f"{m['title']} - source ID",
-              "hillshade": f"{m['title']} - hillshade"}
+              "hillshade": f"{m['title']} - hillshade",
+              "dem2022": m["title_2022"],
+              "zone2022": f"{m['title_2022']} - zone",
+              "hs2022": f"{m['title_2022']} - hillshade"}
+    if sa:
+        abstract_txt, purpose_txt = sa_abstract(cfg, run, kind), sa_purpose(kind)
+        lineage_txt, sources, steps = sa_lineage(cfg, run), sa_source_paragraphs(cfg, run), sa_steps(cfg, run)
+        use_limit = m["use_limitations_2022"]
+        keywords = ["DEM", "digital elevation model", "bare earth", "lidar", "3DEP", "Lake Tahoe", "Tahoe Basin",
+                    "TRPA", "elevation", "terrain", "2022"]
+        themes = ["elevation", "lidar"]
+        accuracy = ("Absolute vertical accuracy is that of the USGS CA_SierraNevada_B22 project DEM: non-vegetated "
+                    "RMSEz 5.04 cm, 9.88 cm at 95 percent confidence; vegetated 24.69 cm at the 95th percentile "
+                    "(USGS project report, 2024-10-25). Bilinear resampling to 1 m adds no systematic error.")
+    else:
+        abstract_txt, purpose_txt = abstract(cfg, run, kind), purpose(kind)
+        lineage_txt, sources, steps = lineage_statement(cfg, run), source_paragraphs(cfg, run), process_steps(cfg, run)
+        use_limit = m["use_limitations"]
+        keywords = ["DEM", "digital elevation model", "bare earth", "bathymetry", "topobathymetric", "lidar",
+                    "multibeam sonar", "Lake Tahoe", "Tahoe Basin", "TRPA", "elevation", "terrain", "lakebed"]
+        themes = ["elevation", "bathymetry", "lidar"]
+        accuracy = ("Relative vertical agreement between sources after alignment, measured as the median and "
+                    "interquartile range of differences at random points over stable ground; see lineage "
+                    "statement. Absolute accuracy inherits from the 2022 lidar.")
     root = ET.Element("metadata", {"xml:lang": "en"})
     esri = sub(root, "Esri")
     sub(esri, "CreaDate", now.strftime("%Y%m%d"))
@@ -280,21 +448,20 @@ def build_xml(cfg, run, kind):
     sub(cit, "resTitle", titles[kind])
     sub(sub(cit, "date"), "pubDate", m["publish_date"])
     contact(cit, "citRespParty", cfg, ROLE_ORIGINATOR)
-    sub(did, "idAbs", abstract(cfg, run, kind))
-    sub(did, "idPurp", purpose(kind))
+    sub(did, "idAbs", abstract_txt)
+    sub(did, "idPurp", purpose_txt)
     sub(did, "idCredit", " ".join(m["credits"].split()))
     keys = sub(did, "searchKeys")
-    for k in ["DEM", "digital elevation model", "bare earth", "bathymetry", "topobathymetric", "lidar",
-              "multibeam sonar", "Lake Tahoe", "Tahoe Basin", "TRPA", "elevation", "terrain", "lakebed"]:
+    for k in keywords:
         sub(keys, "keyword", k)
     theme = sub(did, "themeKeys")
-    for k in ["elevation", "bathymetry", "lidar"]:
+    for k in themes:
         sub(theme, "keyword", k)
     place = sub(did, "placeKeys")
     for k in ["Lake Tahoe", "California", "Nevada", "Tahoe Basin"]:
         sub(place, "keyword", k)
     cons = sub(sub(did, "resConst"), "Consts")
-    sub(cons, "useLimit", " ".join(m["use_limitations"].split()))
+    sub(cons, "useLimit", " ".join(use_limit.split()))
     contact(did, "idPoC", cfg, ROLE_POINT_OF_CONTACT)
     sub(sub(did, "dataLang"), "languageCode", value="eng")
     sub(sub(did, "tpCat"), "TopicCatCd", value=TOPIC_ELEVATION)
@@ -304,19 +471,17 @@ def build_xml(cfg, run, kind):
     dq = sub(root, "dqInfo")
     sub(sub(sub(dq, "dqScope"), "scpLvl"), "ScopeCd", value=SCOPE_DATASET)
     lin = sub(dq, "dataLineage")
-    sub(lin, "statement", lineage_statement(cfg, run))
-    for label, text in source_paragraphs(cfg, run):
+    sub(lin, "statement", lineage_txt)
+    for label, text in sources:
         ds = sub(lin, "dataSource")
         sub(ds, "srcDesc", text)
         sub(sub(ds, "srcCitatn"), "resTitle", label)
-    for i, (label, text) in enumerate(process_steps(cfg, run), 1):
+    for i, (label, text) in enumerate(steps, 1):
         st = sub(lin, "prcStep")
         sub(st, "stepDesc", f"Step {i}, {label}: {text}")
         sub(st, "stepDateTm", m["publish_date"])
     rep = sub(dq, "report", type="DQAbsExtPosAcc", dimension="vertical")
-    sub(rep, "measDesc", "Relative vertical agreement between sources after alignment, measured as the "
-                         "median and interquartile range of differences at random points over stable "
-                         "ground; see lineage statement. Absolute accuracy inherits from the 2022 lidar.")
+    sub(rep, "measDesc", accuracy)
 
     contact(root, "mdContact", cfg, ROLE_POINT_OF_CONTACT)
     sub(root, "mdDateSt", now.strftime("%Y%m%d"))
@@ -349,6 +514,13 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="write XML files only; do not touch the rasters")
     ap.add_argument("--out", help="folder for the XML files (default: next to the rasters)")
     ap.add_argument("--no-sync", action="store_true", help="skip arcpy synchronize after writing")
+    ap.add_argument("--product", choices=["mosaic", "standalone", "all"], default="all",
+                    help="which product family to write (default all)")
+    ap.add_argument("--apply-to", action="append", default=[], metavar="KIND=PATH",
+                    help="also write KIND's metadata to another dataset, e.g. a loaded enterprise-geodatabase "
+                         "raster: dem=F:\\GIS\\DB_CONNECT\\Edit.sde\\SDE.DEM_TahoeBasin_TopoBathy_1m. Kinds: "
+                         "dem, source_id, hillshade, dem2022, zone2022, hs2022. Repeatable. This writes to the "
+                         "target you name; run it only against datasets you intend to change.")
     args = ap.parse_args(argv)
 
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
@@ -359,9 +531,18 @@ def main(argv=None):
     xml_dir = Path(args.out) if args.out else run["out"]
     xml_dir.mkdir(parents=True, exist_ok=True)
 
-    for kind, key in (("dem", "dem"), ("source_id", "source_id"), ("hillshade", "hillshade")):
-        target = out_file(cfg, key, run["sfx"])
+    kinds = []
+    if args.product in ("mosaic", "all"):
+        kinds += [(k, out_file(cfg, key, run["sfx"])) for k, key in MOSAIC.items()]
+    if args.product in ("standalone", "all"):
+        if run["standalone"] is None:
+            print("standalone: provenance text not found in the outputs folder; using config defaults for its text")
+        kinds += [(k, standalone_file(cfg, k, run["sfx"])) for k in STANDALONE]
+
+    xml_by_kind = {}
+    for kind, target in kinds:
         xml_text = build_xml(cfg, run, kind)
+        xml_by_kind[kind] = xml_text
         xml_path = xml_dir / f"{target.name}.metadata.xml"
         xml_path.write_text(xml_text, encoding="utf-8")
         print(f"{kind}: XML -> {xml_path}")
@@ -372,6 +553,18 @@ def main(argv=None):
             continue
         title = apply(target, xml_text, sync=not args.no_sync)
         print(f"{kind}: metadata written to {target} ('{title}')")
+
+    for spec in args.apply_to:
+        if "=" not in spec:
+            raise SystemExit(f"--apply-to expects KIND=PATH, got {spec!r}")
+        kind, path = spec.split("=", 1)
+        if kind not in xml_by_kind:
+            xml_by_kind[kind] = build_xml(cfg, run, kind)
+        if args.dry_run:
+            print(f"{kind}: dry run, would write metadata to {path}")
+            continue
+        title = apply(path, xml_by_kind[kind], sync=not args.no_sync)
+        print(f"{kind}: metadata written to {path} ('{title}')")
 
 
 if __name__ == "__main__":
