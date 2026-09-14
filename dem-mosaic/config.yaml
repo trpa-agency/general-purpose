@@ -305,6 +305,19 @@ qa:
 # ---------------------------------------------------------------------------
 metadata:
   title: Lake Tahoe Basin Bare-Earth DEM, 1 meter (2026 mosaic)
+  # Standalone product from build_2022_dem.py: the 2022 lidar alone, no bathymetry.
+  title_2022: Lake Tahoe Basin Bare-Earth DEM, 2022 Lidar, 1 meter
+  use_limitations_2022: >
+    Not for navigation. This is the 2022 USGS lidar bare-earth surface only. The lake is
+    hydro-flattened at the water elevation of the 2022 acquisition (about 1,897.9 m NAVD88)
+    and is not lake-bottom bathymetry; use the Lake Tahoe Basin DEM mosaic for the lakebed.
+    Coverage follows the USGS 3DEP CA_SierraNevada_B22 work units that reach the Tahoe Basin;
+    cells outside them are NoData. Two wedge-shaped areas along the 120th meridian that fall
+    between the two work units are filled from USGS's seamless 1 m product for the same
+    project (zone raster value 3), gridded by USGS from the same point cloud at 1 m rather
+    than 0.5 m. Along tile-set edges, NoData cells within two cells of data were filled from
+    the mean of neighbouring values. Elevations are unchanged from the USGS deliverables
+    apart from bilinear resampling to the 1 m output grid.
   organization: Tahoe Regional Planning Agency (TRPA)
   contact_name: Mason Bindl
   contact_email: gis@trpa.gov
