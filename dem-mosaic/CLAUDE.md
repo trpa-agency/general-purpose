@@ -76,6 +76,35 @@ cells. Seam cells: median 3x3 range 0.12 m, p99 2.36 m, max 2.40 m (old raster: 
 Results reproduced the lost 2026-09-11 build to within 0.2 km2 per source and 1 cm per offset.
 Products exported 05:23 with run markers; scratch cleaned to 54.6 GB free.
 
+## Delivery to SDE (plan agreed 2026-09-13)
+
+Mason loads the COGs into the enterprise geodatabase himself (Claude never writes to SDE).
+Then `write_metadata.py --apply-to KIND=<sde path>` writes the same metadata to the loaded
+datasets, because Copy Raster does not carry it. Suggested names, following the existing
+`SDE.DEM_*` convention in Raster.sde:
+
+| COG in C:\GIS\dem-mosaic | SDE raster dataset | metadata kind |
+|---|---|---|
+| tahoe_dem_mosaic_1m.tif | SDE.DEM_TahoeBasin_TopoBathy_1m | dem |
+| tahoe_dem_mosaic_source.tif | SDE.DEM_TahoeBasin_TopoBathy_1m_Source | source_id |
+| tahoe_dem_mosaic_hs.tif | (file only, derivable) or SDE.DEM_TahoeBasin_TopoBathy_1m_Hillshade | hillshade |
+| tahoe_dem_2022_1m.tif | SDE.DEM_BareEarth_LiDAR_2022_1m | dem2022 |
+| tahoe_dem_2022_1m_zone.tif | SDE.DEM_BareEarth_LiDAR_2022_1m_Zone | zone2022 |
+| tahoe_dem_2022_1m_hs.tif | (file only) or SDE.DEM_BareEarth_LiDAR_2022_1m_Hillshade | hs2022 |
+
+The existing `SDE.DEM_BareEarth_LiDAR_2022` (terraced cross-zone resample) should be
+deprecated once nothing references it; check map services, Pro projects, and layer files
+under F:\GIS\SYMBOLOGY first. Keep the COGs, config.yaml, resolved_offsets.yaml, and the QA
+CSVs on \\vcenter2 as the reproducible master.
+
+## Run record: third basin build, six sources (2026-09-13)
+
+Steps 2-5 ran 2026-09-12 20:12 to 2026-09-13 01:22 (step 2 101 min, step 3 116, step 4 38,
+step 5 55); step 6 died on temp space, resumed after the feathering change with `--steps 6-8`.
+Offsets vs zone-10 2022: 1 m patch 0.000 (729 pts, IQR 0.000: same point cloud gridded
+twice), 2010 -0.004, green -0.063, sonar +0.839. Standalone `build_2022_dem.py` rebuilt
+12:53 to 14:57 with the three 2022 sources; wedges now filled (zone raster value 3).
+
 ## Step 6 disk and feathering (2026-09-13)
 
 Third basin run (six sources) died in step 6: EucDistance wanted 18.6 GB of temp with 11.4 GB
