@@ -75,3 +75,40 @@ run:
 # values live in ForestHealth/plot-network-design/config.yaml (strata.height_breaks_m); keep them in step.
 strata:
   height_breaks_m: {JP: [8, 22], SMC: [10, 26], RF: [10, 26]}
+
+c2t:
+  # 00c_cloud2trees: Python port of the cloud2trees R package (docs/C2T_PORT.md). Tile subsets and TAO attribution,
+  # not the Basin pipeline (that is 00a/00b). Argument names match the R function.
+  input_las: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\LAZ\\<tile>.laz"   # folder, glob, or list of tiles (synthetic run ignores this)
+  output_dir: "data/processed/c2t"                  # point_cloud_processing_delivery and _temp land here
+  publish_dir: "\\\\vcenter2\\GIS_DATA\\LiDAR\\2022\\Derived\\c2t"
+  ext_dir: "data/raw/ext"                           # TreeMap 2022, Forest Type Groups 30 m, LANDFIRE CBD (c2t.get_data, about 7 GB)
+  download_ext_data: false                          # true = fetch what is missing on the first run
+  aoi: null                                         # optional boundary (file or REST URL) used as study_boundary
+  taos_table: "outputs/taos_trees_2022.parquet"     # 00b tree table to attribute (or Derived\taos\taos_trees_2022.parquet)
+  workers: 3
+  accuracy_level: 2                                 # 1 = DTM normalization, 2 = TIN at 20 pts/m2, 3 = TIN at 100 pts/m2
+  noise_level: 2                                    # 1 = IVF, 2 = SOR(15, 3), 3 = SOR(50, 4) then SOR(15, 3)
+  ground: existing                                  # existing = vendor class 2; csf = cloth simulation (pip cloth-simulation-filter)
+  dtm_res_m: 1
+  chm_res_m: 0.5                                    # cloud2trees default is 0.25; 0.5 suits 8 to 30 pts/m2
+  min_height: 2
+  max_height: 70
+  ws: log_fn                                        # lin_fn, exp_fn, log_fn, or a number (m); pick with itd_tuning
+  itd_tuning_samples: 3
+  estimate_tree_dbh: true
+  dbh_model_regional: cr                            # cr = Chapman-Richards, power
+  dbh_model_local: lin                              # lin or rf, used only with stem detections
+  estimate_dbh_from_cloud: false                    # stem circles need UAS, MLS, or TLS density; off for ALS
+  estimate_tree_competition: true
+  competition_buffer_m: 5
+  competition_max_search_dist_m: 10
+  estimate_tree_type: true
+  estimate_tree_hmd: true
+  hmd_estimate_missing_hmd: true
+  estimate_tree_cbh: true
+  cbh_estimate_missing_cbh: true
+  cbh_tree_sample_n: 333
+  estimate_biomass_method: landfire                 # landfire, cruz, all, or null (cruz needs a mapped forest type group; 370 is not)
+  lanl_export: false
+  lanl_topofile: flat                               # flat or dtm
